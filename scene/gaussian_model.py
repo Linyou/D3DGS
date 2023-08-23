@@ -92,6 +92,23 @@ class GaussianModel:
         self.denom = denom
         self.optimizer.load_state_dict(opt_dict)
 
+        if training_args.train_rest_frame:
+            self._features_dc.requires_grad_(False)
+            self._features_rest.requires_grad_(False)
+            self._scaling.requires_grad_(False)
+            self._opacity.requires_grad_(False)
+            
+            # reinitalize adam momentum
+            for param_group in self.optimizer.param_groups:
+                for p in param_group['params']:
+                    if p.grad is None:
+                        continue
+                    state = self.optimizer.state[p]
+                    # Exponential moving average of gradient values
+                    state['exp_avg'] = torch.zeros_like(p, memory_format=torch.preserve_format)
+                    # Exponential moving average of squared gradient values
+                    state['exp_avg_sq'] = torch.zeros_like(p, memory_format=torch.preserve_format)
+
     @property
     def get_scaling(self):
         return self.scaling_activation(self._scaling)
