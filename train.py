@@ -36,10 +36,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     gaussians.training_setup(opt)
     # if opt.train_rest_frame:
     #     gaussians.fix_params_rest_of_frames()
+    frame_id = scene.model_path.split("/")[-1]
+    model_root = scene.model_path.replace('/'+frame_id, '/')
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         if opt.train_rest_frame:
             first_iter = 0
+            gaussians.restore_t0(model_root)
+        if opt.after_second_frame:
+            gaussians.restore_diff(model_root)
         gaussians.restore(model_params, opt)
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
@@ -91,6 +96,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        if opt.train_rest_frame and (iteration > 0):
+            reg_loss = gaussians.regularization_losses()
+            loss += reg_loss
+        else:
+            reg_loss = None
         loss.backward()
 
         iter_end.record()
@@ -99,19 +109,24 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             if iteration % 10 == 0:
-                progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}"})
+                bar_info = {}
+                if reg_loss is not None:
+                    ema_reg_loss_for_log = 0.4 * reg_loss.item() + 0.6 * ema_loss_for_log
+                    bar_info.update({"RegLoss": f"{ema_reg_loss_for_log:.{7}f}"})
+                bar_info.update({"Loss": f"{ema_loss_for_log:.{7}f}"})
+                progress_bar.set_postfix(bar_info)
                 progress_bar.update(10)
             if iteration == opt.iterations:
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            training_report(tb_writer, iteration, Ll1, loss, l1_loss, reg_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
 
             # Densification
-            if iteration < opt.densify_until_iter:
+            if (iteration < opt.densify_until_iter) and not opt.train_rest_frame:
                 # Keep track of max radii in image-space for pruning
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
@@ -131,6 +146,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+                
+                if not opt.train_rest_frame:
+                    gaussians.save_t0(scene.model_path.replace(frame_id, ''))
+                # else:
+                #     gaussians.save_diff(scene.model_path.replace(frame_id, ''))
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
@@ -154,11 +174,14 @@ def prepare_output_and_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
+def training_report(tb_writer, iteration, Ll1, loss, l1_loss, reg_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
+        if reg_loss is not None:
+            tb_writer.add_scalar('train_loss_patches/reg_loss', reg_loss.item(), iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
+        
 
     # Report test and samples of training set
     if iteration in testing_iterations:
@@ -201,8 +224,8 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[2_000, 10_000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[2_000, 10_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[2_000, 10_000, 30_000])
     parser.add_argument("--start_checkpoint", type=str, default = None)

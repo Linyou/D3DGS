@@ -13,13 +13,34 @@ import torch
 import numpy as np
 from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation
 from torch import nn
+from torch.nn import functional as F
 import os
 from utils.system_utils import mkdir_p
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import RGB2SH
+from torch_cluster import knn
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
+from pytorch3d.transforms import quaternion_to_matrix, quaternion_invert
+
+@torch.compile(backend="inductor", fullgraph=True)
+def _rig_loss(tlast_rotation, tnow_rotation, dist_weight, tlast_dist, tnow_dist):
+    # import pdb; pdb.set_trace()
+    rigid_loss = dist_weight * (
+        tlast_dist - (
+            (
+                quaternion_to_matrix(
+                    tlast_rotation
+                ) @ torch.inverse(
+                    quaternion_to_matrix(
+                        tnow_rotation
+                    )
+                )
+            ).unsqueeze(1) @ tnow_dist.unsqueeze(-1)
+        ).squeeze(-1)
+    ).pow(2).sum(-1, True)
+    return rigid_loss
 
 class GaussianModel:
 
@@ -73,6 +94,26 @@ class GaussianModel:
             self.optimizer.state_dict(),
             self.spatial_lr_scale,
         )
+        
+    def restore_t0(self, path):
+        # load t0 knn points distance
+        numpy_file = os.path.join(path, "t0_ktop_dist.npy")
+        weight_factor = 2000.0
+        self.t0_dist = torch.tensor(np.load(numpy_file)).cuda()
+        # (N, ktop, 1)
+        self.t0_dist_norm = self.t0_dist.pow(2).sum(-1, True).detach()
+        self.dist_weight = torch.exp(
+            -weight_factor * self.t0_dist_norm.pow(2)
+        ).detach()
+        
+        
+    def restore_diff(self, path):
+        # load the difference between the current frame and the last frame
+        numpy_file = os.path.join(path, "diff_xyz.npy")
+        self.diff_xyz = torch.tensor(np.load(numpy_file)).cuda()
+        numpy_file = os.path.join(path, "diff_rotation.npy")
+        self.diff_rotation = torch.tensor(np.load(numpy_file)).cuda() 
+    
     
     def restore(self, model_args, training_args):
         (self.active_sh_degree, 
@@ -93,6 +134,38 @@ class GaussianModel:
         self.optimizer.load_state_dict(opt_dict)
 
         if training_args.train_rest_frame:
+            
+            with torch.no_grad():
+                # keep track of last frame values
+                self.tlast_xyz = self.get_xyz.clone().detach()
+                self.tlast_rotation = self.get_rotation.clone().detach()
+                
+                # pre-compute the knn points
+                self.ktop = 20
+                self.knn_index = knn(
+                    self.tlast_xyz, 
+                    self.tlast_xyz, 
+                    self.ktop
+                )
+                ktop_index = self.knn_index[1]
+                self.tlast_ktop_xyz = self.tlast_xyz[ktop_index].view(
+                    -1, self.ktop, self.get_xyz.shape[-1]
+                )
+                
+                # compute the distance between the ktop points and the original points, (N, ktop, 3) - (N, 1, 3)
+                self.tlast_dist = self.tlast_ktop_xyz - self.tlast_xyz.unsqueeze(1)
+                self.tlast_dist_norm = self.tlast_dist.pow(2).sum(-1, True).sqrt()
+
+                if training_args.after_second_frame:
+                    self._xyz.data += self.diff_xyz
+                    # self._rotation = self._rotation + self.diff_rotation
+            
+            self.tlast_xyz.requires_grad_(False)
+            self.tlast_rotation.requires_grad_(False)
+            self.tlast_ktop_xyz.requires_grad_(False)
+            self.tlast_dist.requires_grad_(False)
+            self.tlast_dist_norm.requires_grad_(False)
+            
             self._features_dc.requires_grad_(False)
             self._features_rest.requires_grad_(False)
             self._scaling.requires_grad_(False)
@@ -162,6 +235,22 @@ class GaussianModel:
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        
+        self.fused_point_cloud = fused_point_cloud.cpu().clone().detach()
+        self.features = features.cpu().clone().detach()
+        self.scales = scales.cpu().clone().detach()
+        self.rots = rots.cpu().clone().detach()
+        self.opacities = opacities.cpu().clone().detach()
+        
+    def reset_state(self):
+        self._xyz = nn.Parameter(self.fused_point_cloud.clone().requires_grad_(True).to("cuda"))
+        self._features_dc = nn.Parameter(self.features[:,:,0:1].clone().transpose(1, 2).contiguous().requires_grad_(True).to("cuda"))
+        self._features_rest = nn.Parameter(self.features[:,:,1:].clone().transpose(1, 2).contiguous().requires_grad_(True).to("cuda"))
+        self._scaling = nn.Parameter(self.scales.clone().requires_grad_(True).to("cuda"))
+        self._rotation = nn.Parameter(self.rots.clone().requires_grad_(True).to("cuda"))
+        self._opacity = nn.Parameter(self.opacities.clone().requires_grad_(True).to("cuda"))
+        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        
 
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
@@ -204,17 +293,47 @@ class GaussianModel:
         for i in range(self._rotation.shape[1]):
             l.append('rot_{}'.format(i))
         return l
+    
+    def save_t0(self, path):
+        ktop = 20
+        _xyz = self._xyz.data.clone().detach()
+        knn_index = knn(_xyz, _xyz, ktop)
+        ktop_index = knn_index[1]
+        ktop_xyz = _xyz[ktop_index].view(
+            -1, ktop, _xyz.shape[-1]
+        )
+        dist = ktop_xyz - _xyz.unsqueeze(1)
+        # save as numpy file
+        np.save(
+            os.path.join(path, "t0_ktop_dist.npy"), 
+            dist.detach().cpu().numpy()
+        )
+        
+    def save_diff(self, path):
+        # save the difference between the current frame and the last frame
+        _xyz = self._xyz.data.clone().detach()
+        _rot = self._rotation.data.clone().detach()
+        diff_xyz = _xyz - self.tlast_xyz
+        diff_rotation = _rot - self.tlast_rotation
+        np.save(
+            os.path.join(path, "diff_xyz.npy"), 
+            diff_xyz.detach().cpu().numpy()
+        )
+        np.save(
+            os.path.join(path, "diff_rotation.npy"), 
+            diff_rotation.detach().cpu().numpy()
+        )
 
     def save_ply(self, path):
         mkdir_p(os.path.dirname(path))
-
+                      
         xyz = self._xyz.detach().cpu().numpy()
+        rotation = self._rotation.detach().cpu().numpy()
         normals = np.zeros_like(xyz)
         f_dc = self._features_dc.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         f_rest = self._features_rest.detach().transpose(1, 2).flatten(start_dim=1).contiguous().cpu().numpy()
         opacities = self._opacity.detach().cpu().numpy()
         scale = self._scaling.detach().cpu().numpy()
-        rotation = self._rotation.detach().cpu().numpy()
 
         dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
 
@@ -223,6 +342,7 @@ class GaussianModel:
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
+            
 
     def reset_opacity(self):
         opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
@@ -271,6 +391,61 @@ class GaussianModel:
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
 
         self.active_sh_degree = self.max_sh_degree
+        
+
+    def load_ply_for_rendering(self, path, only_xyz=False):
+        plydata = PlyData.read(path)
+
+        xyz = np.stack((np.asarray(plydata.elements[0]["x"]),
+                        np.asarray(plydata.elements[0]["y"]),
+                        np.asarray(plydata.elements[0]["z"])),  axis=1)
+        
+        if not only_xyz:
+            opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis]
+
+            features_dc = np.zeros((xyz.shape[0], 3, 1))
+            features_dc[:, 0, 0] = np.asarray(plydata.elements[0]["f_dc_0"])
+            features_dc[:, 1, 0] = np.asarray(plydata.elements[0]["f_dc_1"])
+            features_dc[:, 2, 0] = np.asarray(plydata.elements[0]["f_dc_2"])
+
+            extra_f_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("f_rest_")]
+            extra_f_names = sorted(extra_f_names, key = lambda x: int(x.split('_')[-1]))
+            assert len(extra_f_names)==3*(self.max_sh_degree + 1) ** 2 - 3
+            features_extra = np.zeros((xyz.shape[0], len(extra_f_names)))
+            for idx, attr_name in enumerate(extra_f_names):
+                features_extra[:, idx] = np.asarray(plydata.elements[0][attr_name])
+            # Reshape (P,F*SH_coeffs) to (P, F, SH_coeffs except DC)
+            features_extra = features_extra.reshape((features_extra.shape[0], 3, (self.max_sh_degree + 1) ** 2 - 1))
+
+            scale_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("scale_")]
+            scale_names = sorted(scale_names, key = lambda x: int(x.split('_')[-1]))
+            scales = np.zeros((xyz.shape[0], len(scale_names)))
+            for idx, attr_name in enumerate(scale_names):
+                scales[:, idx] = np.asarray(plydata.elements[0][attr_name])
+                
+            self._features_dc = torch.tensor(features_dc, dtype=torch.float, device="cpu").transpose(1, 2).contiguous()
+            self._features_rest = torch.tensor(features_extra, dtype=torch.float, device="cpu").transpose(1, 2).contiguous()
+            self._opacity = torch.tensor(opacities, dtype=torch.float, device="cpu")
+            self._scaling = torch.tensor(scales, dtype=torch.float, device="cpu")
+
+        rot_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("rot")]
+        rot_names = sorted(rot_names, key = lambda x: int(x.split('_')[-1]))
+        rots = np.zeros((xyz.shape[0], len(rot_names)))
+        for idx, attr_name in enumerate(rot_names):
+            rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
+
+        self._xyz = torch.tensor(xyz, dtype=torch.float, device="cpu")
+        self._rotation = torch.tensor(rots, dtype=torch.float, device="cpu")
+
+        self.active_sh_degree = self.max_sh_degree
+        
+    def to(self, device='cpu'):
+        self._xyz = self._xyz.to(device)
+        self._features_dc = self._features_dc.to(device)
+        self._features_rest = self._features_rest.to(device)
+        self._opacity = self._opacity.to(device)
+        self._scaling = self._scaling.to(device)
+        self._rotation = self._rotation.to(device)
 
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
@@ -422,3 +597,50 @@ class GaussianModel:
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
+        
+    @torch.compile(backend="inductor")
+    def regularization_losses(self):
+        
+        # rigid loss
+        ktop_index = self.knn_index[1]
+        _xyz = self.get_xyz
+        xyz_ktop = _xyz[ktop_index].view(
+            -1, self.ktop, _xyz.shape[-1]
+        )
+        tnow_dist = xyz_ktop - _xyz.unsqueeze(1)
+        
+        # tnow_dist_norm = tnow_dist.pow(2).sum(-1, True).sqrt()
+        rig_loss = _rig_loss(
+            self.tlast_rotation, 
+            self.get_rotation,
+            self.dist_weight,
+            self.tlast_dist,
+            tnow_dist,
+        )
+        # import pdb; pdb.set_trace()
+        # rigid_loss = self.dist_weight * (
+        #     self.tlast_dist - tnow_dist_comp
+        # ).pow(2).sum(-1, True)
+        
+        # rigid_loss = self.tlast_dist - 
+        
+        # isometry loss
+        # iso_loss = self.dist_weight * (
+        #     self.t0_dist_norm - tnow_dist_norm
+        # )
+        # import pdb; pdb.set_trace()
+        
+        # rotation loss
+        # tnow_rot_ktop = self._rotation[ktop_index].view(
+        #     -1, self.ktop, self._rotation.shape[-1]
+        # )
+        # tlast_rot_ktop = self.tlast_rotation[ktop_index].view(
+        #     -1, self.ktop, self.tlast_rotation.shape[-1]
+        # )
+        
+        # tnow_rot_ktop @ 
+        
+        # return (rigid_loss + iso_loss).mean()
+        return rig_loss.mean()
+        
+        
