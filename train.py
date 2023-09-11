@@ -15,7 +15,7 @@ from random import randint
 from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
 import sys
-from scene import Scene, GaussianModel
+from scene import Scene, GaussianModel, DynamicScene
 from utils.general_utils import safe_state
 import uuid
 from tqdm import tqdm
@@ -32,7 +32,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
-    scene = Scene(dataset, gaussians)
+    scene = DynamicScene(dataset, gaussians)
     gaussians.training_setup(opt)
     # if opt.train_rest_frame:
     #     gaussians.fix_params_rest_of_frames()
@@ -53,7 +53,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
-    viewpoint_stack = None
+    time_view_stack = None
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
@@ -81,11 +81,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
 
+        
         # Pick a random Camera
-        if not viewpoint_stack:
-            viewpoint_stack = scene.getTrainCameras().copy()
-        viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+        if not time_view_stack:
+            time_view_stack = scene.getTrainCameras().copy()
+        time_sample = randint(0, len(time_view_stack)-1)
+        viewpoint_stack = time_view_stack[time_sample]
+        viewpoint_cam = viewpoint_stack[randint(0, len(viewpoint_stack)-1)]
 
+        gaussians._fwd_xyz(time_sample)
+        gaussians._fwd_rot(time_sample)
         # Render
         if (iteration - 1) == debug_from:
             pipe.debug = True
