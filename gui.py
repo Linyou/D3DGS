@@ -52,77 +52,6 @@ def write_buffer(
         for p in ti.static(range(3)):
             final_pixel[i, j][p] = x[p, j_rev, i]
 
-import warnings; warnings.filterwarnings("ignore")
-class Camera:
-    """
-    Camera class from: https://github.com/kwea123/ngp_pl/blob/master/show_gui.py
-    """
-    def __init__(self, r, pose=None, center=None):
-        self.radius = r
-        if center is not None:
-            self.center = center
-        else:
-            self.center = np.zeros(3)
-        self.rot = np.eye(3)
-        # self.center = pose_np[20][:3, 3]
-        # self.rot = pose_np[50][:3, :3]
-        if pose is not None:
-            self.res_defalut = pose[0]
-        self.rotate_speed = 0.8
-
-        self.inner_rot = np.eye(3)
-
-    def reset(self, pose=None, aabb=None):
-        self.rot = np.eye(3)
-        self.inner_rot = np.eye(3)
-        self.center = np.zeros(3)
-        self.radius = 1.5
-        if pose is not None:
-            self.rot = pose[:3, :3]
-
-    @property
-    def pose(self):
-        # first move camera to radius
-        res = np.eye(4)
-        res[2, 3] += self.radius
-        # rotate
-        rot = np.eye(4)
-        rot[:3, :3] = self.rot
-        res = rot @ res
-        # inner rotate
-        rot = np.eye(4)
-        rot[:3, :3] = self.inner_rot
-        res = res @ rot
-        # translate
-        res[:3, 3] += self.center
-        # return res
-
-        # print("res_defalut: ", self.res_defalut)
-        # print("res: ", res)
-        # return self.res_defalut
-        return res
-
-    def orbit(self, dx, dy):
-        rotvec_x = self.rot[:, 1] * np.radians(-100*self.rotate_speed * dx)
-        rotvec_y = self.rot[:, 0] * np.radians(-100*self.rotate_speed * dy)
-        self.rot = R.from_rotvec(rotvec_y).as_matrix() @ \
-                   R.from_rotvec(rotvec_x).as_matrix() @ \
-                   self.rot
-
-    def inner_orbit(self, dx, dy):
-        rotvec_x = self.inner_rot[:, 1] * np.radians(-100*self.rotate_speed * dx)
-        rotvec_y = self.inner_rot[:, 0] * np.radians(-100*self.rotate_speed * dy)
-        self.inner_rot = R.from_rotvec(rotvec_y).as_matrix() @ \
-                         R.from_rotvec(rotvec_x).as_matrix() @ \
-                         self.inner_rot
-
-    def scale(self, delta):
-        self.radius *= 1.1 ** (-delta)
-
-    def pan(self, dx, dy, dz=0):
-        self.center += 1e-4 * self.rot @ np.array([dx, dy, dz])
-
-
 class GUI:
     def __init__(self, dataset, opt, pipe, checkpoint):
 
@@ -170,8 +99,6 @@ class GUI:
         self.iter_end = torch.cuda.Event(enable_timing = True)
         self.H=int(self.viewpoint_cam.image_height)
         self.W=int(self.viewpoint_cam.image_width)
-        
-        self.cam = Camera(2.5)
 
         self.camera = ti.ui.Camera()
         self.camera.position(1, 1, 1)
@@ -206,12 +133,13 @@ class GUI:
 
         current_frame = 0
         start = datetime.datetime.now()
+        
+        num_pos = self.current_gaussians.get_xyz.shape[0]
 
         while window.running:
             self.camera.track_user_inputs(window, movement_speed=0.03, hold_key=ti.ui.RMB)
 
             with gui.sub_window("Options", 0.01, 0.01, 0.25, 0.28) as w:
-                self.cam.rotate_speed = w.slider_float('rotate speed', self.cam.rotate_speed, 0.1, 1.)
 
                 if gui.button('play'):
                     playing = True
@@ -238,12 +166,9 @@ class GUI:
                 else:
                     first_play = True
                         
-
-                self.img_mode = w.checkbox("show depth", self.img_mode)
-
-
                 # cam_pose = self.cam.pose
-                w.text(f'samples per rays: {self.mean_samples} s/r')
+                w.text(f'render size: {self.viewpoint_cam.image_width} x {self.viewpoint_cam.image_height}')
+                w.text(f'number of gaussians: {num_pos}')
                 w.text(f'render times: {1000*self.dt:.2f} ms')
                 w.text(f'c2w:')
                 w.text(f'{self.viewpoint_cam.R[0]}')
@@ -253,14 +178,23 @@ class GUI:
                 w.text(
                     f'-{self.camera.curr_position}'
                 )
-            R = self.camera.get_view_matrix()[:3, :3]
-            t = np.array([
-                -self.camera.curr_position[0], 
-                self.camera.curr_position[1],
-                self.camera.curr_position[2],
-            ])
+                w.text('lookat:')
+                w.text(
+                    f'-{self.camera.curr_lookat}'
+                )
+                w.text('up:')
+                w.text(
+                    f'-{self.camera.curr_up}'
+                )
+            Rt = self.camera.get_view_matrix().T
+            Rt[:3, 3] *= np.array([1, 1, -1])
+            # t = np.array([
+            #     -self.camera.curr_position[0], 
+            #     self.camera.curr_position[1],
+            #     self.camera.curr_position[2],
+            # ])
             # self.viewpoint_cam.new_cam(self.cam.rot, self.cam.center)
-            self.viewpoint_cam.new_cam(R, t)
+            self.viewpoint_cam.new_cam(Rt[:3, :3], Rt[:3, 3])
             # print("frame id: ", current_frame)
             if update_frame:
                 self.current_gaussians._xyz[...] = self.gaussians_list[current_frame]._xyz

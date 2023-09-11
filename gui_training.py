@@ -14,6 +14,7 @@ from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 
 import taichi as ti
+from taichi.math import vec3, ivec2
 
 import os
 import torch
@@ -28,6 +29,10 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+
+import nerfvis
+from utils.sh_utils import SH2RGB
+from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
 
 def prepare_output(args):    
     if not args.model_path:
@@ -75,6 +80,7 @@ class GUI:
         viewpoint_stack = self.scene.getTrainCameras().copy()
         self.viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
         self.viewpoint_stack = self.scene.getTrainCameras().copy()
+        # import pdb; pdb.set_trace()
         # placeholders
         self.dt = 0
         self.mean_samples = 0
@@ -87,12 +93,40 @@ class GUI:
         self.W=int(self.viewpoint_cam.image_width)
     
         self.camera = ti.ui.Camera()
-        self.camera.position(0.66, -0.71, 2)
-        self.camera.lookat(1, -0.73, 1)
+        self.camera.position(0, 0, 2)
+        self.camera.lookat(0, 0, 1)
         self.camera.up(0, 1, 0)
+        self.camera.fov(
+            np.rad2deg(self.viewpoint_cam.FoVx)
+        )
         
         self.iteration = 0
         
+        R_np = []
+        T_np = []
+        w2c_mats = []
+        # import pdb; pdb.set_trace()
+        for ii in range(len(viewpoint_stack)):
+            cam_i = viewpoint_stack[ii]
+            R_np.append(cam_i.R)
+            T_np.append(cam_i.T)
+            W2C = getWorld2View2(cam_i.R, cam_i.T)
+            C2W = np.linalg.inv(W2C)
+            w2c_mats.append(C2W)
+        w2c_mats = np.stack(w2c_mats, axis=0)
+
+        self.cam_T = w2c_mats[:, :3, -1]
+        self.cam_pos = ti.Vector.field(
+            3, dtype=ti.f32, 
+            shape=len(viewpoint_stack)
+        )
+        for i in tqdm(range(len(viewpoint_stack))):
+            self.cam_pos[i] = vec3(
+                self.cam_T[i, 0],
+                self.cam_T[i, 1],
+                self.cam_T[i, 2],
+            )
+            
     @torch.no_grad()
     def render_frame(self):
         t = time.time()
@@ -107,8 +141,6 @@ class GUI:
 
     def render_gui(self):
 
-        ti.init(arch=ti.cuda, offline_cache=True)
-
         W, H = self.W, self.H
         print("W:", type(W))
         final_pixel = ti.Vector.field(n=3, dtype=float, shape=(W, H))
@@ -121,9 +153,60 @@ class GUI:
         start_time = time.time()
         eta_times = 0
         num_pos = self.gaussians.get_xyz.shape[0]
+        
+        scene = ti.ui.Scene()
+        pos_lines = ti.Vector.field(3, dtype=ti.f32, shape=(6, ))
+        pos_lines_colors = ti.Vector.field(3, dtype=ti.f32, shape=(6, ))
+        pos_lines[0] = vec3(0, 0, 0)
+        pos_lines_colors[0] = vec3(1, 0, 0)
+        pos_lines[1] = vec3(1, 0, 0)
+        pos_lines_colors[1] = vec3(1, 0, 0)
+        
+        pos_lines[2] = vec3(0, 0, 0)
+        pos_lines_colors[2] = vec3(0, 1, 0)
+        pos_lines[3] = vec3(0, 1, 0)
+        pos_lines_colors[3] = vec3(0, 1, 0)
+        
+        pos_lines[4] = vec3(0, 0, 0)
+        pos_lines_colors[4] = vec3(0, 0, 1)
+        pos_lines[5] = vec3(0, 0, 1)
+        pos_lines_colors[5] = vec3(0, 0, 1)
+        
+        pos_vertex = ti.Vector.field(3, dtype=ti.f32, shape=(8, ))
+        pos_indice = ti.Vector.field(2, dtype=ti.i32, shape=(12, ))
+        vertex = [
+            [1, 1, 0],
+            [1, 1, 1],
+            [0, 1, 1],
+            [0, 0, 1],
+            [1, 0, 1],
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 0],
+        ]
+        for i in range(7):
+            pos_vertex[i] = vec3(*vertex[i])
+        indice = [
+            [0, 6],
+            [0, 5],
+            [0, 1],
+            [4, 1],
+            [4, 5],
+            [4, 3],
+            [2, 6],
+            [2, 3],
+            [2, 1],
+            [7, 6],
+            [7, 5],
+            [7, 3],
+        ]
+        for i in range(9):
+            pos_indice[i] = ivec2(*indice[i])
 
         while window.running:
             self.camera.track_user_inputs(window, movement_speed=0.03, hold_key=ti.ui.RMB)
+            scene.set_camera(self.camera)
+            scene.ambient_light((0.8, 0.8, 0.8))
 
             with gui.sub_window("Options", 0.01, 0.01, 0.23, 0.6) as w:
 
@@ -150,9 +233,9 @@ class GUI:
                 look_z = gui.slider_float("look_z", self.camera.curr_lookat[2], minimum=-5, maximum=5)
                 self.camera.lookat(look_x, look_y, look_z)
                 
-                up_x = gui.slider_float("up_x", self.camera.curr_up[0], minimum=-1, maximum=1)
-                up_y = gui.slider_float("up_y", self.camera.curr_up[1], minimum=-1, maximum=1)
-                up_z = gui.slider_float("up_z", self.camera.curr_up[2], minimum=-1, maximum=1)
+                up_x = gui.slider_int("up_x", self.camera.curr_up[0], minimum=-1, maximum=1)
+                up_y = gui.slider_int("up_y", self.camera.curr_up[1], minimum=-1, maximum=1)
+                up_z = gui.slider_int("up_z", self.camera.curr_up[2], minimum=-1, maximum=1)
                 self.camera.up(up_x, up_y, up_z)       
                 
                 # cam_pose = self.cam.pose
@@ -187,19 +270,28 @@ class GUI:
             if training:
                 cur_cam_id = self.training_step()
                 
-            R = self.camera.get_view_matrix()[:3, :3]
-            t = np.array([
-                -self.camera.curr_position[0], 
-                self.camera.curr_position[1],
-                self.camera.curr_position[2],
-            ])
+            Rt = self.camera.get_view_matrix()
+            R = Rt[:3, :3].T
+            # R *= np.array([[1, 1, 1]])
+            Rt[3, :3] *= np.array([1, -1, -1])
+            # t = np.array([
+            #     -self.camera.curr_position[0], 
+            #     self.camera.curr_position[1],
+            #     self.camera.curr_position[2],
+            # ])
+            # import pdb; pdb.set_trace()
             # self.viewpoint_cam.new_cam(self.cam.rot, self.cam.center)
-            self.viewpoint_cam.new_cam(R, t)
+            self.viewpoint_cam.new_cam(R[:, [0 ,2, 1]], Rt[3, :3])
             # print("frame id: ", current_frame)
             render_buffer = self.render_frame()
             # print("render_buffer shape: ", render_buffer.shape)
             write_buffer(True, W, H, render_buffer, final_pixel)
             canvas.set_image(final_pixel)
+            
+            # scene.particles(self.cam_pos, color=(1, 1, 1), radius=0.01)
+            scene.lines(pos_vertex, indices=pos_indice, color=(0.28, 0.68, 0.99), width=5.0)
+            scene.lines(pos_lines, per_vertex_color=pos_lines_colors, width=5.0)
+            canvas.scene(scene)
             window.show()
             
             
@@ -265,6 +357,8 @@ if __name__ == "__main__":
     parser.add_argument("--start_checkpoint", type=str, default = None)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
+    
+    ti.init(arch=ti.cuda, offline_cache=True)
     
     print("Optimizing " + args.model_path)
 
