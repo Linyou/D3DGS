@@ -89,8 +89,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         viewpoint_stack = time_view_stack[time_sample]
         viewpoint_cam = viewpoint_stack[randint(0, len(viewpoint_stack)-1)]
 
-        gaussians._fwd_xyz(time_sample)
-        gaussians._fwd_rot(time_sample)
+        gaussians.fwd_xyz(time_sample)
+        gaussians.fwd_rot(time_sample)
         # Render
         if (iteration - 1) == debug_from:
             pipe.debug = True

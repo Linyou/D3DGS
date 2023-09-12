@@ -197,7 +197,7 @@ class GaussianModel:
         poly_params = torch.randn((fused_point_cloud.shape[0], 9, 4), device="cuda")
         self._rot_poly_params = nn.Parameter(poly_params.contiguous().requires_grad_(True))
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
-        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        self.max_radii2D = torch.zeros((self._xyz.shape[0]), device="cuda")
         
         self.fused_point_cloud = fused_point_cloud.cpu().clone().detach()
         self.features = features.cpu().clone().detach()
@@ -212,13 +212,13 @@ class GaussianModel:
         self._scaling = nn.Parameter(self.scales.clone().requires_grad_(True).to("cuda"))
         self._rotation = nn.Parameter(self.rots.clone().requires_grad_(True).to("cuda"))
         self._opacity = nn.Parameter(self.opacities.clone().requires_grad_(True).to("cuda"))
-        self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        self.max_radii2D = torch.zeros((self._xyz.shape[0]), device="cuda")
         
 
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
-        self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
-        self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        self.xyz_gradient_accum = torch.zeros((self._xyz.shape[0], 1), device="cuda")
+        self.denom = torch.zeros((self._xyz.shape[0], 1), device="cuda")
 
         l = [
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
@@ -227,8 +227,8 @@ class GaussianModel:
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
-            {'parmas': [self._xyz_poly_params], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz_poly_params"},
-            {'parmas': [self._rot_poly_params], 'lr': training_args.rotation_lr, "name": "rot_poly_params"},
+            {'params': [self._xyz_poly_params], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz_poly_params"},
+            {'params': [self._rot_poly_params], 'lr': training_args.rotation_lr, "name": "rot_poly_params"},
         ]
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)

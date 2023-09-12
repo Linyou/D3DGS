@@ -18,6 +18,7 @@ from scene.gaussian_model import GaussianModel
 from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
 
+from tqdm import tqdm
 class Scene:
 
     gaussians : GaussianModel
@@ -119,10 +120,10 @@ class DynamicScene:
         scene_info_list = []
         frame_id = args.source_path.split('/')[-1]
         model_root = args.model_path.replace('/'+frame_id, '/')
-        num_frames = 300
-        for i in range(num_frames):
+        num_frames = 150
+        for i in tqdm(range(num_frames), desc="Reading frames"):
             image_path = args.images.replace('/'+frame_id, '/'+str(i))
-            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, image_path, args.eval)
+            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, image_path, args.eval, suppress=True)
             scene_info_list.append(scene_info)
 
 
@@ -149,13 +150,12 @@ class DynamicScene:
         self.cameras_extent = scene_info_list[0].nerf_normalization["radius"]
 
         for resolution_scale in resolution_scales:
-            print("Loading Training Cameras")
             self.train_cameras[resolution_scale] = []
-            for scene_info in scene_info_list:
+            for scene_info in tqdm(scene_info_list, desc="Loading training cameras"):
                 self.train_cameras[resolution_scale].append(cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args))
-            print("Loading Test Cameras")
+                
             self.test_cameras[resolution_scale] = []
-            for scene_info in scene_info_list:
+            for scene_info in tqdm(scene_info_list, desc="Loading Test Cameras"):
                 self.test_cameras[resolution_scale].append(cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args))
 
         if self.loaded_iter:
