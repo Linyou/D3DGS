@@ -21,7 +21,7 @@ from random import randint
 from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
 import sys
-from scene import Scene, GaussianModel
+from scene import Scene, GaussianModel, DynamicScene
 from utils.general_utils import safe_state
 import uuid
 from tqdm import tqdm
@@ -53,30 +53,38 @@ def write_buffer(
             final_pixel[i, j][p] = x[p, j_rev, i]
 
 class GUI:
-    def __init__(self, dataset, opt, pipe, checkpoint):
+    def __init__(self, dataset, opt, pipe, checkpoint, dynamic=False):
 
         device = "cuda:0"
+        self.dynamic = dynamic
 
         self.gaussians_list = []
         self.current_gaussians = GaussianModel(dataset.sh_degree)
-        self.scene = Scene(dataset, self.current_gaussians)
+        if dynamic:
+            self.scene = DynamicScene(
+                dataset, 
+                self.current_gaussians, 
+                only_frist=True,
+            )
+        else:
+            self.scene = Scene(dataset, self.current_gaussians)
         self.pipe = pipe
-        # self.current_gaussians.training_setup(opt)
-        # (model_params, first_iter) = torch.load(checkpoint)
-        # self.current_gaussians.restore(model_params, opt)
-        path_str = dataset.model_path
-        gaussians_paths_root = path_str.replace("/0", "")
-        spath = f"{gaussians_paths_root}/1/point_cloud/iteration_2000/point_cloud.ply"
-        self.current_gaussians.load_ply_for_rendering(spath)
-        self.current_gaussians.to("cuda")
-        for idx in tqdm(range(1, 300)):
-            if idx == 0:
-                spath = f"{gaussians_paths_root}/{idx}/point_cloud/iteration_10000/point_cloud.ply"
-            else:
-                spath = f"{gaussians_paths_root}/{idx}/point_cloud/iteration_2000/point_cloud.ply"
-            gg = GaussianModel(dataset.sh_degree)
-            gg.load_ply_for_rendering(spath, only_xyz=True)
-            self.gaussians_list.append(gg)
+        self.current_gaussians.training_setup(opt)
+        (model_params, first_iter) = torch.load(checkpoint)
+        self.current_gaussians.restore(model_params, opt)
+        # path_str = dataset.model_path
+        # gaussians_paths_root = path_str.replace("/0", "")
+        # spath = f"{gaussians_paths_root}/1/point_cloud/iteration_2000/point_cloud.ply"
+        # self.current_gaussians.load_ply_for_rendering(spath)
+        # self.current_gaussians.to("cuda")
+        # for idx in tqdm(range(1, 300)):
+        #     if idx == 0:
+        #         spath = f"{gaussians_paths_root}/{idx}/point_cloud/iteration_10000/point_cloud.ply"
+        #     else:
+        #         spath = f"{gaussians_paths_root}/{idx}/point_cloud/iteration_2000/point_cloud.ply"
+        #     gg = GaussianModel(dataset.sh_degree)
+        #     gg.load_ply_for_rendering(spath, only_xyz=True)
+        #     self.gaussians_list.append(gg)
             
         # import pdb; pdb.set_trace()
         # self.gaussians.training_setup(opt)
@@ -87,7 +95,11 @@ class GUI:
         self.bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
         self.background = torch.tensor(self.bg_color, dtype=torch.float32, device="cuda")
 
-        self.viewpoint_stack = self.scene.getTrainCameras().copy()
+        if dynamic:
+            self.viewpoint_stack = self.scene.getTrainCameras().copy()[0]
+        else:
+            self.viewpoint_stack = self.scene.getTrainCameras().copy()
+            
         self.viewpoint_cam = self.viewpoint_stack.pop(randint(0, len(self.viewpoint_stack)-1))
         # placeholders
         self.dt = 0
@@ -134,6 +146,8 @@ class GUI:
         current_frame = 0
         start = datetime.datetime.now()
         
+        self.current_gaussians.fwd_xyz(current_frame)
+        
         num_pos = self.current_gaussians.get_xyz.shape[0]
 
         while window.running:
@@ -154,7 +168,7 @@ class GUI:
                     if duration >= 40:  # 25 fps
                         if not first_play:
                             current_frame += 1
-                            if current_frame > 298:
+                            if current_frame > 149:
                                 current_frame = 0
                             update_frame = True
                             # print("Frame:", current_frame)  # Uncomment to print the frame number
@@ -197,8 +211,11 @@ class GUI:
             self.viewpoint_cam.new_cam(Rt[:3, :3], Rt[:3, 3])
             # print("frame id: ", current_frame)
             if update_frame:
-                self.current_gaussians._xyz[...] = self.gaussians_list[current_frame]._xyz
-                self.current_gaussians._rotation[...] = self.gaussians_list[current_frame]._rotation
+                if self.dynamic:
+                    self.current_gaussians.fwd_xyz(current_frame)
+                else:
+                    self.current_gaussians._xyz[...] = self.gaussians_list[current_frame]._xyz
+                    self.current_gaussians._rotation[...] = self.gaussians_list[current_frame]._rotation
             render_buffer = self.render_frame()
             # print("render_buffer shape: ", render_buffer.shape)
             write_buffer(True, W, H, render_buffer, final_pixel)
@@ -220,6 +237,7 @@ if __name__ == "__main__":
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[2_000, 10_000, 30_000])
     parser.add_argument("--start_checkpoint", type=str, default = None)
+    parser.add_argument("--dynamic", action='store_true', default=False)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
@@ -235,7 +253,7 @@ if __name__ == "__main__":
     dataset = lp.extract(args)
     opt = op.extract(args)
     pipe = pp.extract(args)
-    gui = GUI(dataset, opt, pipe, args.start_checkpoint)
+    gui = GUI(dataset, opt, pipe, args.start_checkpoint, args.dynamic)
     gui.render_gui()
     # args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from
     

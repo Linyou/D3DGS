@@ -1,14 +1,13 @@
 import torch
 import taichi as ti
-ti.init(arch=ti.cuda)
 
 @ti.kernel
-def poly_kernel_fwd(factors: ti.types.ndarray(), t: int, out: ti.types.ndarray()):
+def poly_kernel_fwd(factors: ti.types.ndarray(), t: float, out: ti.types.ndarray()):
     for pid, dim_id, f_id in ti.ndrange(factors.shape[0], factors.shape[1], factors.shape[2]):
         out[pid, dim_id] += factors[pid, dim_id, f_id] * (t ** (f_id+1))
         
 @ti.kernel
-def poly_kernel_bwd(d_factors: ti.types.ndarray(), t: int, d_out: ti.types.ndarray()):
+def poly_kernel_bwd(d_factors: ti.types.ndarray(), t: float, d_out: ti.types.ndarray()):
     for pid, dim_id, f_id in ti.ndrange(d_factors.shape[0], d_factors.shape[1], d_factors.shape[2]):
         d_factors[pid, dim_id, f_id] = d_out[pid, dim_id] * (t ** (f_id+1))
         
@@ -47,4 +46,7 @@ class Polynomial_taichi(torch.nn.Module):
         )
         
     def forward(self, x):
-        return _polynomial_taichi.apply(self.factors, x)
+        return _polynomial_taichi.apply(
+            self.factors.contiguous(), 
+            x.contiguous(), 
+        )

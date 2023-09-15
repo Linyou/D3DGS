@@ -9,16 +9,13 @@ def safe_run(cmd):
     except subprocess.CalledProcessError as e:
         print(f"Error running the command: {e}")
 
-name = 'coffee_martini_poly_base'
 dataset_path = '/home/loyot/workspace/SSD_1T/Datasets/NeRF/3d_vedio_datasets/coffee_martini/images_split'
 
-# first frame
-print(colored("Running: ", 'light_cyan'), f'frame: 0:')
 command = [
-    'python', 'train.py',
+    'python', 'gui.py',
     '-s', f'{dataset_path}/0',
-    '--model_path', f'output/{name}/',
-    '--iterations', '60000',
+    '--dynamic', 
+    '--model_path', f'output/coffee_martini_poly_base',
+    '--start_checkpoint', f'output/coffee_martini_poly_base/chkpnt60000.pth',
 ]
 safe_run(command)
-    

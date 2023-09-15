@@ -99,7 +99,7 @@ class DynamicScene:
 
     gaussians : GaussianModel
 
-    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
+    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0], only_frist=False):
         """b
         :param path: Path to colmap scene main folder.
         """
@@ -121,11 +121,16 @@ class DynamicScene:
         frame_id = args.source_path.split('/')[-1]
         model_root = args.model_path.replace('/'+frame_id, '/')
         num_frames = 150
+        
+        if only_frist:
+            num_frames = 1
+            
         for i in tqdm(range(num_frames), desc="Reading frames"):
-            image_path = args.images.replace('/'+frame_id, '/'+str(i))
+            image_path = args.source_path.replace('/'+frame_id, f'/{str(i)}/input')
             scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, image_path, args.eval, suppress=True)
             scene_info_list.append(scene_info)
 
+        # import pdb; pdb.set_trace()
 
         scene_info = scene_info_list[0]
         if not self.loaded_iter:

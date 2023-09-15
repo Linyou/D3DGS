@@ -27,6 +27,9 @@ try:
     TENSORBOARD_FOUND = True
 except ImportError:
     TENSORBOARD_FOUND = False
+    
+    
+import taichi as ti
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
@@ -90,7 +93,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         viewpoint_cam = viewpoint_stack[randint(0, len(viewpoint_stack)-1)]
 
         gaussians.fwd_xyz(time_sample)
-        gaussians.fwd_rot(time_sample)
+        # gaussians.fwd_rot(time_sample)
         # Render
         if (iteration - 1) == debug_from:
             pipe.debug = True
@@ -119,6 +122,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     ema_reg_loss_for_log = 0.4 * reg_loss.item() + 0.6 * ema_loss_for_log
                     bar_info.update({"RegLoss": f"{ema_reg_loss_for_log:.{7}f}"})
                 bar_info.update({"Loss": f"{ema_loss_for_log:.{7}f}"})
+                bar_info.update({"NumGass": f"{gaussians._xyz.shape[0]}"})
                 progress_bar.set_postfix(bar_info)
                 progress_bar.update(10)
             if iteration == opt.iterations:
@@ -191,8 +195,16 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, reg_loss, elapsed,
     # Report test and samples of training set
     if iteration in testing_iterations:
         torch.cuda.empty_cache()
-        validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
-                              {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
+        # random pick a t
+        # t = randint(0, 149)
+        t = 48
+        
+        print("test with t: {}".format(t))
+        cams = scene.getTrainCameras()[t]
+        validation_configs = ({'name': 'test', 'cameras' : []}, 
+                              {'name': 'train', 'cameras' : cams})
+        
+        scene.gaussians.fwd_xyz(t)
 
         for config in validation_configs:
             if config['cameras'] and len(config['cameras']) > 0:
@@ -220,6 +232,8 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, reg_loss, elapsed,
         torch.cuda.empty_cache()
 
 if __name__ == "__main__":
+    ti.init(arch=ti.cuda)
+    
     # Set up command line argument parser
     parser = ArgumentParser(description="Training script parameters")
     lp = ModelParams(parser)
@@ -229,10 +243,10 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[2_000, 10_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[2_000, 10_000, 30_000, 50_000, 60_000])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[2_000, 10_000])
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[2_000, 10_000, 30_000])
+    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[2_000, 10_000, 30_000, 50_000, 60_000])
     parser.add_argument("--start_checkpoint", type=str, default = None)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
