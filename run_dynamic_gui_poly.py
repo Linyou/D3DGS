@@ -15,7 +15,7 @@ command = [
     'python', 'gui.py',
     '-s', f'{dataset_path}/0',
     '--dynamic', 
-    '--model_path', f'output/coffee_martini_poly_base',
-    '--start_checkpoint', f'output/coffee_martini_poly_base/chkpnt60000.pth',
+    '--model_path', f'output/coffee_martini_poly_base_v4',
+    '--start_checkpoint', f'output/coffee_martini_poly_base_v4/chkpnt180000.pth',
 ]
 safe_run(command)

@@ -147,6 +147,7 @@ class GUI:
         start = datetime.datetime.now()
         
         self.current_gaussians.fwd_xyz(current_frame)
+        self.current_gaussians.fwd_rot(current_frame)
         
         num_pos = self.current_gaussians.get_xyz.shape[0]
 
@@ -213,6 +214,7 @@ class GUI:
             if update_frame:
                 if self.dynamic:
                     self.current_gaussians.fwd_xyz(current_frame)
+                    self.current_gaussians.fwd_rot(current_frame)
                 else:
                     self.current_gaussians._xyz[...] = self.gaussians_list[current_frame]._xyz
                     self.current_gaussians._rotation[...] = self.gaussians_list[current_frame]._rotation

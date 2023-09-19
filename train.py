@@ -34,7 +34,13 @@ import taichi as ti
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.sh_degree)
+    gaussians = GaussianModel(
+        dataset.sh_degree,
+        xyz_traj_feat_dim=2,
+        rot_traj_feat_dim=2,
+        trajectory_type='fft',
+        traj_init='zeros',
+    )
     scene = DynamicScene(dataset, gaussians)
     gaussians.training_setup(opt)
     # if opt.train_rest_frame:
@@ -93,7 +99,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         viewpoint_cam = viewpoint_stack[randint(0, len(viewpoint_stack)-1)]
 
         gaussians.fwd_xyz(time_sample)
-        # gaussians.fwd_rot(time_sample)
+        gaussians.fwd_rot(time_sample)
         # Render
         if (iteration - 1) == debug_from:
             pipe.debug = True
@@ -130,12 +136,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             # Log and save
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, reg_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
-            if (iteration in saving_iterations):
+            if (iteration % saving_iterations) == 0:
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
 
             # Densification
-            if (iteration < opt.densify_until_iter) and not opt.train_rest_frame:
+            if (iteration < opt.densify_until_iter) and not opt.train_rest_frame and time_sample == 0:
                 # Keep track of max radii in image-space for pruning
                 gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
@@ -152,7 +158,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
 
-            if (iteration in checkpoint_iterations):
+            if (iteration % checkpoint_iterations) == 0:
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
                 
@@ -193,30 +199,33 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, reg_loss, elapsed,
         
 
     # Report test and samples of training set
-    if iteration in testing_iterations:
+    if iteration % testing_iterations == 0:
         torch.cuda.empty_cache()
         # random pick a t
         # t = randint(0, 149)
-        t = 48
+        t = range(0, 150, 10)
+        cams_test = []
+        t_list = []
+        for i in t:
+            t_list.append(i)
+            cams_test += scene.getTestCameras()[i]
+            
+        # import pdb; pdb.set_trace()
+        validation_configs = ({'name': 'test', 'cameras' : cams_test}, 
+                              {'name': 'train', 'cameras' : []})
         
-        print("test with t: {}".format(t))
-        cams = scene.getTrainCameras()[t]
-        validation_configs = ({'name': 'test', 'cameras' : []}, 
-                              {'name': 'train', 'cameras' : cams})
-        
-        scene.gaussians.fwd_xyz(t)
 
         for config in validation_configs:
             if config['cameras'] and len(config['cameras']) > 0:
                 l1_test = 0.0
                 psnr_test = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
+                    scene.gaussians.fwd_xyz(t_list[idx])
+                    scene.gaussians.fwd_rot(t_list[idx])
                     image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
-                    if tb_writer and (idx < 5):
-                        tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
-                        if iteration == testing_iterations[0]:
-                            tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
+                    tb_writer.add_images(config['name'] + "_view_{}_frame_{}/render".format(viewpoint.image_name, t_list[idx]), image[None], global_step=iteration)
+                    tb_writer.add_images(config['name'] + "_view_{}_frame_{}/ground_truth".format(viewpoint.image_name, t_list[idx]), gt_image[None], global_step=iteration)
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
                 psnr_test /= len(config['cameras'])
@@ -243,13 +252,13 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[2_000, 10_000, 30_000, 50_000, 60_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[2_000, 10_000])
+    parser.add_argument("--test_iterations", type=int, default=5000)
+    parser.add_argument("--save_iterations", type=int, default=5000)
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[2_000, 10_000, 30_000, 50_000, 60_000])
+    parser.add_argument("--checkpoint_iterations", type=int, default=10000)
     parser.add_argument("--start_checkpoint", type=str, default = None)
     args = parser.parse_args(sys.argv[1:])
-    args.save_iterations.append(args.iterations)
+    # args.save_iterations.append(args.iterations)
     
     print("Optimizing " + args.model_path)
 
