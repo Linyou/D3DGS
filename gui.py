@@ -59,15 +59,30 @@ class GUI:
         self.dynamic = dynamic
 
         self.gaussians_list = []
-        self.current_gaussians = GaussianModel(dataset.sh_degree)
-        if dynamic:
+        self.current_gaussians = GaussianModel(
+            dataset.sh_degree,
+            max_steps=opt.iterations+1,
+            xyz_traj_feat_dim=3,
+            xyz_trajectory_type='poly',
+            rot_traj_feat_dim=4,
+            rot_trajectory_type='fft',
+            feature_traj_feat_dim=2,
+            feature_trajectory_type='fft',
+            traj_init='zero',
+            max_frames=100,
+        )
+        if opt.real_dynamic:
             self.scene = DynamicScene(
                 dataset, 
                 self.current_gaussians, 
                 only_frist=True,
             )
         else:
-            self.scene = Scene(dataset, self.current_gaussians)
+            self.scene = Scene(
+                dataset, 
+                self.current_gaussians, 
+                shuffle=opt.dataset_shuffle
+            )
         self.pipe = pipe
         self.current_gaussians.training_setup(opt)
         (model_params, first_iter) = torch.load(checkpoint)
@@ -96,7 +111,11 @@ class GUI:
         self.background = torch.tensor(self.bg_color, dtype=torch.float32, device="cuda")
 
         if dynamic:
-            self.viewpoint_stack = self.scene.getTrainCameras().copy()[0]
+            get_cam_stack = self.scene.getTrainCameras().copy()
+            if isinstance(get_cam_stack[0], list):
+                self.viewpoint_stack = get_cam_stack[0]
+            else:
+                self.viewpoint_stack = get_cam_stack
         else:
             self.viewpoint_stack = self.scene.getTrainCameras().copy()
             
@@ -131,7 +150,7 @@ class GUI:
 
     def render_gui(self):
 
-        ti.init(arch=ti.cuda, offline_cache=True)
+        ti.init(arch=ti.cuda, offline_cache=False)
 
         W, H = self.W, self.H
         print("W:", type(W))
@@ -143,11 +162,13 @@ class GUI:
         playing = False
         first_play = False
 
-        current_frame = 0
+        current_frame = 14
+        last_frame = 14
+        time_max = self.current_gaussians.max_frames
+        duration_interval = 50
         start = datetime.datetime.now()
         
-        self.current_gaussians.fwd_xyz(current_frame)
-        self.current_gaussians.fwd_rot(current_frame)
+        self.current_gaussians.set_timestamp(current_frame)
         
         num_pos = self.current_gaussians.get_xyz.shape[0]
 
@@ -166,11 +187,11 @@ class GUI:
                     end = datetime.datetime.now()
                     duration = (end - start).total_seconds() * 1000  # Convert to milliseconds
 
-                    if duration >= 40:  # 25 fps
+                    if duration >= duration_interval:  # 25 fps
                         if not first_play:
                             current_frame += 1
-                            if current_frame > 149:
-                                current_frame = 0
+                            if current_frame > time_max:
+                                current_frame = 14
                             update_frame = True
                             # print("Frame:", current_frame)  # Uncomment to print the frame number
 
@@ -180,6 +201,11 @@ class GUI:
                         start = datetime.datetime.now()
                 else:
                     first_play = True
+                    
+                current_frame = gui.slider_int("time", current_frame, minimum=0, maximum=time_max)
+                if current_frame != last_frame:
+                    update_frame = True
+                    last_frame = current_frame
                         
                 # cam_pose = self.cam.pose
                 w.text(f'render size: {self.viewpoint_cam.image_width} x {self.viewpoint_cam.image_height}')
@@ -213,8 +239,7 @@ class GUI:
             # print("frame id: ", current_frame)
             if update_frame:
                 if self.dynamic:
-                    self.current_gaussians.fwd_xyz(current_frame)
-                    self.current_gaussians.fwd_rot(current_frame)
+                    self.current_gaussians.set_timestamp(current_frame)
                 else:
                     self.current_gaussians._xyz[...] = self.gaussians_list[current_frame]._xyz
                     self.current_gaussians._rotation[...] = self.gaussians_list[current_frame]._rotation

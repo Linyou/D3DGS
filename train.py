@@ -10,9 +10,10 @@
 #
 
 import os
+from copy import deepcopy
 import torch
 from random import randint
-from utils.loss_utils import l1_loss, ssim
+from utils.loss_utils import l1_loss, ssim, l2_loss
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel, DynamicScene
@@ -21,7 +22,7 @@ import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
-from arguments import ModelParams, PipelineParams, OptimizationParams
+from arguments import ModelParams, PipelineParams, OptimizationParams, FlowParams
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -31,17 +32,25 @@ except ImportError:
     
 import taichi as ti
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
+def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(
         dataset.sh_degree,
-        xyz_traj_feat_dim=2,
-        rot_traj_feat_dim=2,
-        trajectory_type='fft',
-        traj_init='zeros',
+        max_steps=opt.iterations+1,
+        xyz_traj_feat_dim=flow_args.xyz_traj_feat_dim,
+        xyz_trajectory_type=flow_args.xyz_trajectory_type,
+        rot_traj_feat_dim=flow_args.rot_traj_feat_dim,
+        rot_trajectory_type=flow_args.rot_trajectory_type,
+        feature_traj_feat_dim=flow_args.feature_traj_feat_dim,
+        feature_trajectory_type=flow_args.feature_trajectory_type,
+        traj_init=flow_args.traj_init,
     )
-    scene = DynamicScene(dataset, gaussians)
+    if opt.real_dynamic:
+        scene = DynamicScene(dataset, gaussians)
+    else:
+        scene = Scene(dataset, gaussians, shuffle=opt.dataset_shuffle)
+        
     gaussians.training_setup(opt)
     # if opt.train_rest_frame:
     #     gaussians.fix_params_rest_of_frames()
@@ -49,11 +58,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     model_root = scene.model_path.replace('/'+frame_id, '/')
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
-        if opt.train_rest_frame:
-            first_iter = 0
-            gaussians.restore_t0(model_root)
-        if opt.after_second_frame:
-            gaussians.restore_diff(model_root)
+        # if opt.train_rest_frame:
+        #     first_iter = 0
+        #     gaussians.restore_t0(model_root)
+        # if opt.after_second_frame:
+        #     gaussians.restore_diff(model_root)
         gaussians.restore(model_params, opt)
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
@@ -62,59 +71,124 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
+    viewpoint_stack = None
     time_view_stack = None
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
+    if opt.knn_loss:
+        gaussians.get_knn_index()
     for iteration in range(first_iter, opt.iterations + 1):        
-        if network_gui.conn == None:
-            network_gui.try_connect()
-        while network_gui.conn != None:
-            try:
-                net_image_bytes = None
-                custom_cam, do_training, pipe.convert_SHs_python, pipe.compute_cov3D_python, keep_alive, scaling_modifer = network_gui.receive()
-                if custom_cam != None:
-                    net_image = render(custom_cam, gaussians, pipe, background, scaling_modifer)["render"]
-                    net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
-                network_gui.send(net_image_bytes, dataset.source_path)
-                if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
-                    break
-            except Exception as e:
-                network_gui.conn = None
+        # if network_gui.conn == None:
+        #     network_gui.try_connect()
+        # while network_gui.conn != None:
+        #     try:
+        #         net_image_bytes = None
+        #         custom_cam, do_training, pipe.convert_SHs_python, pipe.compute_cov3D_python, keep_alive, scaling_modifer = network_gui.receive()
+        #         if custom_cam != None:
+        #             net_image = render(custom_cam, gaussians, pipe, background, scaling_modifer)["render"]
+        #             net_image_bytes = memoryview((torch.clamp(net_image, min=0, max=1.0) * 255).byte().permute(1, 2, 0).contiguous().cpu().numpy())
+        #         network_gui.send(net_image_bytes, dataset.source_path)
+        #         if do_training and ((iteration < int(opt.iterations)) or not keep_alive):
+        #             break
+        #     except Exception as e:
+        #         network_gui.conn = None
 
         iter_start.record()
 
         gaussians.update_learning_rate(iteration)
+        
+        # if iteration % 1000:
+        #     gaussians.update_fft_degree()
 
         # Every 1000 its we increase the levels of SH up to a maximum degree
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
+            
+        renders = []
+        viewspace_points = []
+        visibility_filters = []
+        radiis = []
+        gt_images = []
+        arr_lossess = {}
+        for bs_idx in range(opt.batch_size):
+            # Pick a random Camera
+            if opt.real_dynamic:
+                if not time_view_stack or len(time_view_stack) == 0:
+                    time_view_stack = scene.getTrainCameras(deep_copy=True)
+                if opt.batch_on_t:
+                    if bs_idx == 0:
+                        sample_time = randint(0, len(time_view_stack)-1)
+                else:
+                    sample_time = randint(0, len(time_view_stack)-1)
+                # if len(time_view_stack[sample_time]) == 0:
+                #     import pdb; pdb.set_trace()
+                if opt.use_ensure_unique_sample:
+                    viewpoint_cam = time_view_stack[sample_time].pop(randint(0, len(time_view_stack[sample_time])-1))
+                    
+                    if len(time_view_stack[sample_time]) == 0:
+                        time_view_stack.pop(sample_time)
+                else:
+                    
+                    if opt.aug_frist_end and (iteration % 1000):
+                        viewpoint_cam = time_view_stack[0][randint(0, len(time_view_stack[0])-1)]
+                    else:
+                        viewpoint_cam = time_view_stack[sample_time][randint(0, len(time_view_stack[sample_time])-1)]
+                        
+            else:
+                if not viewpoint_stack:
+                    viewpoint_stack = scene.getTrainCameras().copy()
+                viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+                
+            time_sample = viewpoint_cam.timestamp
 
-        
-        # Pick a random Camera
-        if not time_view_stack:
-            time_view_stack = scene.getTrainCameras().copy()
-        time_sample = randint(0, len(time_view_stack)-1)
-        viewpoint_stack = time_view_stack[time_sample]
-        viewpoint_cam = viewpoint_stack[randint(0, len(viewpoint_stack)-1)]
-
-        gaussians.fwd_xyz(time_sample)
-        gaussians.fwd_rot(time_sample)
-        # Render
-        if (iteration - 1) == debug_from:
-            pipe.debug = True
-        render_pkg = render(viewpoint_cam, gaussians, pipe, background)
-        image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+            if iteration > 0:
+                arr_lossess = gaussians.set_timestamp(
+                    time_sample, 
+                    training=True, 
+                    training_step=iteration, 
+                    get_smooth_loss=True,
+                    use_interpolation=False,
+                    random_noise=True,
+                )
+            else:
+                gaussians.set_no_deform()
+            # import pdb; pdb.set_trace()
+            # Render
+            if (iteration - 1) == debug_from:
+                pipe.debug = True
+            render_pkg = render(viewpoint_cam, gaussians, pipe, background)
+            image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+            
+            renders.append(render_pkg["render"])
+            viewspace_points.append(render_pkg["viewspace_points"])
+            visibility_filters.append(render_pkg["visibility_filter"])
+            radiis.append(render_pkg["radii"])
+            gt_images.append(viewpoint_cam.original_image.cuda())
 
         # Loss
-        gt_image = viewpoint_cam.original_image.cuda()
-        Ll1 = l1_loss(image, gt_image)
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+        # gt_image = viewpoint_cam.original_image.cuda()
+        images = torch.stack(renders)
+        gt_images = torch.stack(gt_images)
+        Ll1 = l1_loss(images, gt_images)
+        # loss = Ll1
+        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(images, gt_images))
+        
+        # get the extra losses from the gaussians
+        for arr_loss_key in arr_lossess:
+            loss += 0.1*arr_lossess[arr_loss_key]
+            
         if opt.train_rest_frame and (iteration > 0):
             reg_loss = gaussians.regularization_losses()
             loss += reg_loss
         else:
             reg_loss = None
+            
+        if opt.knn_loss:
+            knn_loss = gaussians.knn_losses()
+            loss += 0.1*knn_loss
+            # print("knn_loss: ", knn_loss)
+            
         loss.backward()
 
         iter_end.record()
@@ -135,22 +209,47 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, reg_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            if opt.real_dynamic:
+                training_report_real_dynamic(tb_writer, iteration, Ll1, loss, l1_loss, reg_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            else:
+                training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+                
             if (iteration % saving_iterations) == 0:
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
 
             # Densification
-            if (iteration < opt.densify_until_iter) and not opt.train_rest_frame and time_sample == 0:
-                # Keep track of max radii in image-space for pruning
-                gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
-                gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
-
-                if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
-                    size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-                    gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
+            if (iteration < opt.densify_until_iter) and not opt.train_rest_frame:
                 
-                if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
+                bs = len(viewspace_points)
+                for i in range(bs):
+                    radii_i = radiis[i]
+                    visibility_filter_i = visibility_filters[i]
+                    viewspace_point_tensor_i = viewspace_points[i]
+                    gaussians.max_radii2D[visibility_filter_i] = torch.max(gaussians.max_radii2D[visibility_filter_i], radii_i[visibility_filter_i])
+                    
+                    gaussians.add_densification_stats(
+                        viewspace_point_tensor_i, 
+                        visibility_filter_i
+                    )
+                # Keep track of max radii in image-space for pruning
+                # gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
+                # gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+                # densification_interval = opt.densification_interval
+                if iteration > 100000:
+                    densification_interval = 1000
+                    opc_reset_interval = 1000000
+                    densify_grad_threshold = opt.densify_grad_threshold
+                else:
+                    densification_interval = opt.densification_interval
+                    opc_reset_interval = opt.opacity_reset_interval
+                    densify_grad_threshold = opt.densify_grad_threshold
+                if iteration > opt.densify_from_iter and iteration % densification_interval == 0:
+                    size_threshold = 20 if iteration > 3000 else None
+                    gaussians.densify_and_prune(densify_grad_threshold, opt.min_opacity, scene.cameras_extent, size_threshold)
+                    if opt.knn_loss:
+                        gaussians.get_knn_index()
+                if iteration % opc_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
 
             # Optimizer step
@@ -162,8 +261,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
                 
-                if not opt.train_rest_frame:
-                    gaussians.save_t0(scene.model_path.replace(frame_id, ''))
+                # if not opt.train_rest_frame:
+                #     gaussians.save_t0(scene.model_path.replace(frame_id, ''))
                 # else:
                 #     gaussians.save_diff(scene.model_path.replace(frame_id, ''))
 
@@ -189,7 +288,7 @@ def prepare_output_and_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-def training_report(tb_writer, iteration, Ll1, loss, l1_loss, reg_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
+def training_report_real_dynamic(tb_writer, iteration, Ll1, loss, l1_loss, reg_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
@@ -201,18 +300,14 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, reg_loss, elapsed,
     # Report test and samples of training set
     if iteration % testing_iterations == 0:
         torch.cuda.empty_cache()
-        # random pick a t
-        # t = randint(0, 149)
-        t = range(0, 150, 10)
-        cams_test = []
-        t_list = []
-        for i in t:
-            t_list.append(i)
-            cams_test += scene.getTestCameras()[i]
-            
-        # import pdb; pdb.set_trace()
-        validation_configs = ({'name': 'test', 'cameras' : cams_test}, 
-                              {'name': 'train', 'cameras' : []})
+
+    # Report test and samples of training set
+    if iteration % testing_iterations == 0:
+        torch.cuda.empty_cache()
+        validation_configs = (
+            {'name': 'test', 'cameras' : [scene.getTestCameras()[idx % len(scene.getTestCameras())][0] for idx in range(0, len(scene.getTestCameras()), 10)]}, 
+            {'name': 'train', 'cameras' : []}
+        )
         
 
         for config in validation_configs:
@@ -220,12 +315,12 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, reg_loss, elapsed,
                 l1_test = 0.0
                 psnr_test = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
-                    scene.gaussians.fwd_xyz(t_list[idx])
-                    scene.gaussians.fwd_rot(t_list[idx])
+                    # import pdb; pdb.set_trace()
+                    scene.gaussians.set_timestamp(viewpoint.timestamp)
                     image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
-                    tb_writer.add_images(config['name'] + "_view_{}_frame_{}/render".format(viewpoint.image_name, t_list[idx]), image[None], global_step=iteration)
-                    tb_writer.add_images(config['name'] + "_view_{}_frame_{}/ground_truth".format(viewpoint.image_name, t_list[idx]), gt_image[None], global_step=iteration)
+                    tb_writer.add_images(config['name'] + "_view_{}_frame_{}/render".format(viewpoint.image_name, viewpoint.timestamp), image[None], global_step=iteration)
+                    tb_writer.add_images(config['name'] + "_view_{}_frame_{}/ground_truth".format(viewpoint.image_name, viewpoint.timestamp), gt_image[None], global_step=iteration)
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
                 psnr_test /= len(config['cameras'])
@@ -239,15 +334,57 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, reg_loss, elapsed,
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
             tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
         torch.cuda.empty_cache()
+        
+def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
+    if tb_writer:
+        tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
+        tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
+        tb_writer.add_scalar('iter_time', elapsed, iteration)
+
+
+    # Report test and samples of training set
+    if iteration % testing_iterations == 0:
+        torch.cuda.empty_cache()
+        validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
+                              {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
+
+
+        for config in validation_configs:
+            if config['cameras'] and len(config['cameras']) > 0:
+                l1_test = 0.0
+                psnr_test = 0.0
+                for idx, viewpoint in enumerate(config['cameras']):
+                    scene.gaussians.set_timestamp(viewpoint.timestamp)
+                    image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
+                    gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
+                    if tb_writer:
+                        tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
+                        if iteration == testing_iterations:
+                            tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
+                    l1_test += l1_loss(image, gt_image).mean().double()
+                    psnr_test += psnr(image, gt_image).mean().double()
+                psnr_test /= len(config['cameras'])
+                l1_test /= len(config['cameras'])          
+                print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
+                if tb_writer:
+                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
+                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
+
+
+        if tb_writer:
+            tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
+            tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
+        torch.cuda.empty_cache()
 
 if __name__ == "__main__":
-    ti.init(arch=ti.cuda)
+    ti.init(arch=ti.cuda, offline_cache=False)
     
     # Set up command line argument parser
     parser = ArgumentParser(description="Training script parameters")
     lp = ModelParams(parser)
     op = OptimizationParams(parser)
     pp = PipelineParams(parser)
+    ff = FlowParams(parser)
     parser.add_argument('--ip', type=str, default="127.0.0.1")
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
@@ -257,18 +394,24 @@ if __name__ == "__main__":
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", type=int, default=10000)
     parser.add_argument("--start_checkpoint", type=str, default = None)
+    parser.add_argument("--configs", type=str, default = "")
     args = parser.parse_args(sys.argv[1:])
     # args.save_iterations.append(args.iterations)
     
+    if args.configs:
+        import mmcv
+        from utils.params_utils import merge_hparams
+        config = mmcv.Config.fromfile(args.configs)
+        args = merge_hparams(args, config)
     print("Optimizing " + args.model_path)
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
     # Start GUI server, configure and run training
-    network_gui.init(args.ip, args.port)
+    # network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
+    training(lp.extract(args), op.extract(args), pp.extract(args), ff.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
 
     # All done
     print("\nTraining complete.")

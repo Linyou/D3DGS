@@ -46,6 +46,8 @@ class Scene:
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("Found transforms_train.json file, assuming Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)
+        elif os.path.exists(os.path.join(args.source_path, "scene.json")):
+            scene_info = sceneLoadTypeCallbacks["Hyper"](args.source_path, args.white_background, args.eval, gen_ply=True)
         else:
             print("error path: ", args.source_path)
             assert False, "Could not recognize scene type!"
@@ -83,6 +85,8 @@ class Scene:
                                                            "point_cloud.ply"))
         else:
             self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
+            
+        self.gaussians.max_frames = scene_info.maxtime
 
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
@@ -125,9 +129,20 @@ class DynamicScene:
         if only_frist:
             num_frames = 1
             
-        for i in tqdm(range(num_frames), desc="Reading frames"):
+        cam_extrinsics = None
+        cam_intrinsics = None
+        for i in tqdm(range(0, num_frames), desc="Reading frames"):
             image_path = args.source_path.replace('/'+frame_id, f'/{str(i)}/input')
-            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, image_path, args.eval, suppress=True)
+            scene_info, cam_extrinsics, cam_intrinsics = sceneLoadTypeCallbacks["Colmap"](
+                args.source_path, 
+                image_path, 
+                args.eval, 
+                suppress=True, 
+                timestamp=i, 
+                gen_ply=True if i == 0 else False,
+                cam_extrinsics=cam_extrinsics,
+                cam_intrinsics=cam_intrinsics,
+            )
             scene_info_list.append(scene_info)
 
         # import pdb; pdb.set_trace()
@@ -150,9 +165,8 @@ class DynamicScene:
         if shuffle:
             for scene_info in scene_info_list:
                 random.shuffle(scene_info.train_cameras)  # Multi-res consistent random shuffling
-                random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
 
-        self.cameras_extent = scene_info_list[0].nerf_normalization["radius"]
+        self.cameras_extent = scene_info_list[0].nerf_normalization["radius"] * 5
 
         for resolution_scale in resolution_scales:
             self.train_cameras[resolution_scale] = []
@@ -175,8 +189,12 @@ class DynamicScene:
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
         self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
 
-    def getTrainCameras(self, scale=1.0):
+    def getTrainCameras(self, scale=1.0, deep_copy=False):
+        if deep_copy:
+            return [cam_stack.copy() for cam_stack in self.train_cameras[scale]]
         return self.train_cameras[scale]
 
-    def getTestCameras(self, scale=1.0):
+    def getTestCameras(self, scale=1.0, deep_copy=False):
+        if deep_copy:
+            return [cam_stack.copy() for cam_stack in self.train_cameras[scale]]
         return self.test_cameras[scale]
