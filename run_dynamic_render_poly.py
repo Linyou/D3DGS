@@ -22,17 +22,17 @@ def safe_run(cmd):
 # dataset_path = '/home/test/workspace/loyot/datasets/hyper_nerf/vrig-chicken'
 # config = "arguments/dnerf/lego.py"
 
-name = 'vrig_chicken_poly_base_v18'
-dataset_path = '/home/test/workspace/loyot/datasets/hyper_nerf/vrig-chicken'
-config = "arguments/hypernerf/default.py"
+# name = 'vrig_chicken_poly_base_v17'
+# dataset_path = '/home/test/workspace/loyot/datasets/hyper_nerf/vrig-chicken'
+# config = "arguments/hypernerf/default.py"
 
 # name = 'split-cookie_poly_base_v17'
 # dataset_path = '/home/test/workspace/loyot/datasets/hyper_nerf/split-cookie'
 # config = "arguments/hypernerf/default.py"
 
-# name = 'espresso_poly_base_v17'
-# dataset_path = '/home/test/workspace/loyot/datasets/hyper_nerf/espresso'
-# config = "arguments/hypernerf/default.py"
+name = 'espresso_poly_base_v17'
+dataset_path = '/home/test/workspace/loyot/datasets/hyper_nerf/espresso'
+config = "arguments/hypernerf/default.py"
 
 # name = 'americano_poly_base_v17'
 # dataset_path = '/home/test/workspace/loyot/datasets/hyper_nerf/americano'
@@ -43,16 +43,14 @@ config = "arguments/hypernerf/default.py"
 # config = "arguments/hypernerf/chickchicken.py"
 
 # first frame
-print(colored("Running: ", 'light_cyan'), f'frame: 0:')
 command = [
-    'python', 'train.py',
+    'python', 'render_dynamic.py',
     '-s', f'{dataset_path}',
     '--model_path', f'output/{name}/',
     # '--iterations', '30000',
-    '--config', f'{config}',
-    '--test_iterations', '2000',
-    '--eval'
+    '--configs', f'{config}',
+    '--eval',
+    '--skip_train',
+    '--skip_test',
 ]
 safe_run(command)
-
-    

@@ -49,7 +49,7 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
     if opt.real_dynamic:
         scene = DynamicScene(dataset, gaussians)
     else:
-        scene = Scene(dataset, gaussians, shuffle=opt.dataset_shuffle)
+        scene = Scene(dataset, gaussians, shuffle=opt.dataset_shuffle, load_img_factor=pipe.load_img_factor)
         
     gaussians.training_setup(opt)
     # if opt.train_rest_frame:
@@ -147,7 +147,7 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
                     time_sample, 
                     training=True, 
                     training_step=iteration, 
-                    get_smooth_loss=True,
+                    get_smooth_loss=False,
                     use_interpolation=False,
                     random_noise=True,
                 )

@@ -310,9 +310,13 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
     return scene_info
 
 
-def readHyperDataInfos(datadir,use_bg_points,eval, gen_ply=False):
-    train_cam_infos = Load_hyper_data(datadir,1.0,use_bg_points,split ="train")
-    test_cam_infos = Load_hyper_data(datadir,1.0,use_bg_points,split="test")
+def readHyperDataInfos(datadir,use_bg_points,eval, gen_ply=False, factor=1.0):
+    # train_cam_infos = Load_hyper_data(datadir,1.0,use_bg_points,split ="train")
+    # test_cam_infos = Load_hyper_data(datadir,1.0,use_bg_points,split="test")
+    print("Loading hyper data with factor: ", factor)
+    
+    train_cam_infos = Load_hyper_data(datadir,factor,use_bg_points,split ="train")
+    test_cam_infos = Load_hyper_data(datadir,factor,use_bg_points,split="test")
 
     train_cam = format_hyper_data(train_cam_infos,"train")
     max_time = train_cam_infos.max_time

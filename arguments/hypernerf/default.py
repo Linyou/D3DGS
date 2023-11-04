@@ -1,13 +1,18 @@
 ModelParams = dict(
-    use_extra_cam_info=True
+    use_extra_cam_info=True,
 )
 
-FlowArgs = dict(
+PipelineParams = dict(
+    load_img_factor=0.5,
+)
+
+FlowParams = dict(
     xyz_traj_feat_dim = 16,
     xyz_trajectory_type = 'poly',
     rot_traj_feat_dim = 20,
     rot_trajectory_type = 'fft',
-    feature_traj_feat_dim = 2,
+    # feature_traj_feat_dim = 2,
+    feature_traj_feat_dim = 8,
     feature_trajectory_type = 'fft',
     traj_init = 'zero',
 )
@@ -24,7 +29,7 @@ OptimizationParams = dict(
     rotation_lr = 0.005,
     percent_dense = 0.01,
     lambda_dssim = 0.2,
-    densification_interval = 1000,
+    densification_interval = 100,
     opacity_reset_interval = 3000,
     densify_from_iter = 500,
     densify_until_iter = 15_000,

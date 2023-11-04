@@ -19,7 +19,7 @@ from typing import Any
 from utils.system_utils import mkdir_p
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import RGB2SH
-from knn_cuda import KNN
+# from knn_cuda import KNN
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
@@ -78,7 +78,7 @@ class GaussianModel:
         feature_traj_feat_dim: int = 2,
         xyz_trajectory_type: str = "fft", 
         rot_trajectory_type: str = "fft", 
-        scale_trajectory_type : str = 'fft', 
+        scale_trajectory_type : str = 'None', 
         feature_trajectory_type: str = "fft",
         traj_init: str = "random",
         max_frames: Any = None, ):
@@ -122,8 +122,8 @@ class GaussianModel:
         self.timestamp = 0.0
         self.max_frames = max_frames - 1 if max_frames else None
         
-        self.ktop = 20
-        self.knn = KNN(k=self.ktop, transpose_mode=True)
+        # self.ktop = 20
+        # self.knn = KNN(k=self.ktop, transpose_mode=True)
 
     def capture(self):
         return (
@@ -260,15 +260,15 @@ class GaussianModel:
     def set_timestamp(self, t, training=False, training_step=0, get_smooth_loss=False, use_interpolation=False, random_noise=False, get_moving_loss=False):
         
         if self.max_frames:
-            self.timestamp = t/self.max_frames 
-            offset_width = (1/self.max_frames)
+            self.timestamp = t/(self.max_frames+50)
+            offset_width = (1/self.max_frames)*0.5
         else:
             self.timestamp = t
             offset_width = 0.001
         losses = {}
         
         if random_noise and training and t != 0 and t != self.max_frames:
-            noise_weight = 0.1 * (1 - (training_step/self.max_steps))
+            noise_weight = offset_width * (1 - (training_step/self.max_steps))
             self.timestamp += noise_weight*np.random.randn()
         
         mid_xyz = self.xyz_trajectory_func(
@@ -346,20 +346,18 @@ class GaussianModel:
         #     self.timestamp, 
         #     self.traj_fit_degree
         # )
-        # self._fwd_features_dc = self._features_dc + self.feature_trajectory_func(
-        #     self._features_dc_poly_params.contiguous(), 
-        #     self.timestamp, 
-        #     self.traj_fit_degree
-        # ).reshape(self._features_dc.shape)
-        
-        self._fwd_features_dc = self._features_dc
-
-        # self._fwd_feature = self._features_rest
-        self._fwd_feature = self._features_rest + self.feature_trajectory_func(
-            self._feature_poly_params.contiguous(), 
+        self._fwd_features_dc = self._features_dc + self.feature_trajectory_func(
+            self._features_dc_poly_params.contiguous(), 
             self.timestamp, 
             self.traj_fit_degree
-        ).reshape(self._features_rest.shape)
+        ).reshape(self._features_dc.shape)
+
+        self._fwd_feature = self._features_rest
+        # self._fwd_feature = self._features_rest + self.feature_trajectory_func(
+        #     self._feature_poly_params.contiguous(), 
+        #     self.timestamp, 
+        #     self.traj_fit_degree
+        # ).reshape(self._features_rest.shape)
         
         # if training_step > 20000:
         #     self._fwd_features_dc = self._features_dc.detach()
@@ -460,13 +458,13 @@ class GaussianModel:
         if self.feature_trajectory_type == "fft":
             features_dc_poly_params = self.traj_init((fused_point_cloud.shape[0], self.feature_traj_feat_dim, f_flat_dim, 2), device="cuda")
         elif self.feature_trajectory_type == "poly":
-            features_dc_poly_params = self.traj_init((fused_point_cloud.shape[0], self.feature_traj_feat_dim, f_flat_dim), device="cuda")        
+            features_dc_poly_params = self.traj_init((fused_point_cloud.shape[0], self.feature_traj_feat_dim, f_flat_dim), device="cuda")     
             
-        f_flat_dim = (features.shape[-1]-1)*3
-        if self.feature_trajectory_type == "fft":
-            feature_poly_params = self.traj_init((fused_point_cloud.shape[0], self.feature_traj_feat_dim, f_flat_dim, 2), device="cuda")
-        elif self.feature_trajectory_type == "poly":
-            feature_poly_params = self.traj_init((fused_point_cloud.shape[0], self.feature_traj_feat_dim, f_flat_dim), device="cuda")
+        # f_flat_dim = (features.shape[-1]-1)*3
+        # if self.feature_trajectory_type == "fft":
+        #     feature_poly_params = self.traj_init((fused_point_cloud.shape[0], self.feature_traj_feat_dim, f_flat_dim, 2), device="cuda")
+        # elif self.feature_trajectory_type == "poly":
+        #     feature_poly_params = self.traj_init((fused_point_cloud.shape[0], self.feature_traj_feat_dim, f_flat_dim), device="cuda")
             
         # if self.scale_trajectory_type == "fft":
         #     scale_poly_params = self.traj_init((fused_point_cloud.shape[0], self.scale_traj_feat_dim, 3, 2), device="cuda")
@@ -484,7 +482,7 @@ class GaussianModel:
         self._xyz_poly_params = nn.Parameter(xyz_poly_params.contiguous().requires_grad_(True))
         self._rot_poly_params = nn.Parameter(rot_poly_params.contiguous().requires_grad_(True))
         # self._scale_poly_params = nn.Parameter(scale_poly_params.contiguous().requires_grad_(True))
-        self._feature_poly_params = nn.Parameter(feature_poly_params.contiguous().requires_grad_(True))
+        # self._feature_poly_params = nn.Parameter(feature_poly_params.contiguous().requires_grad_(True))
         self._features_dc_poly_params = nn.Parameter(features_dc_poly_params.contiguous().requires_grad_(True))
         
         self.fused_point_cloud = fused_point_cloud.cpu().clone().detach()
@@ -496,7 +494,7 @@ class GaussianModel:
         self.xyz_poly_params = xyz_poly_params.cpu().clone().detach()
         self.rot_poly_params = rot_poly_params.cpu().clone().detach()
         # self.scale_poly_params = scale_poly_params.cpu().clone().detach()
-        self.feature_poly_params = feature_poly_params.cpu().clone().detach()
+        # self.feature_poly_params = feature_poly_params.cpu().clone().detach()
         self.features_dc_poly_params = features_dc_poly_params.cpu().clone().detach()
         
     def reset_state(self):
@@ -528,7 +526,7 @@ class GaussianModel:
             {'params': [self._rot_poly_params], 'lr': training_args.rotation_lr, "name": "rot_poly_params"},
             # {'params': [self._scale_poly_params], 'lr': training_args.scaling_lr, "name": "scale_poly_params"},
             {'params': [self._features_dc_poly_params], 'lr': training_args.feature_lr, "name": "features_dc_poly_params"},
-            {'params': [self._feature_poly_params], 'lr': training_args.feature_lr / 20.0, "name": "feature_poly_params"}
+            # {'params': [self._feature_poly_params], 'lr': training_args.feature_lr / 20.0, "name": "feature_poly_params"}
         ]
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
@@ -776,7 +774,7 @@ class GaussianModel:
         self._rot_poly_params = optimizable_tensors["rot_poly_params"]
         # self._scale_poly_params = optimizable_tensors["scale_poly_params"]
         self._features_dc_poly_params = optimizable_tensors["features_dc_poly_params"]
-        self._feature_poly_params = optimizable_tensors["feature_poly_params"]
+        # self._feature_poly_params = optimizable_tensors["feature_poly_params"]
 
         self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
 
@@ -830,7 +828,7 @@ class GaussianModel:
             "xyz_poly_params" : new_xyz_poly_params,
             # "scale_poly_params" : new_scale_poly_params,
             "features_dc_poly_params": new_features_dc_poly_params,
-            "feature_poly_params" : new_feature_poly_params,
+            # "feature_poly_params" : new_feature_poly_params,
             
         }
 
@@ -845,7 +843,7 @@ class GaussianModel:
         self._rot_poly_params = optimizable_tensors["rot_poly_params"]
         # self._scale_poly_params = optimizable_tensors["scale_poly_params"]
         self._features_dc_poly_params = optimizable_tensors["features_dc_poly_params"]
-        self._feature_poly_params = optimizable_tensors["feature_poly_params"]
+        # self._feature_poly_params = optimizable_tensors["feature_poly_params"]
         
         # update fwd scaling
         # self._fwd_scale = self._scaling + self.scale_trajectory_func(
@@ -895,10 +893,10 @@ class GaussianModel:
         
         if self.feature_trajectory_type == "fft":
             new_features_dc_poly_params = self._features_dc_poly_params[selected_pts_mask].repeat(N,1,1, 1)
-            new_feature_poly_params = self._feature_poly_params[selected_pts_mask].repeat(N,1,1, 1)
+            # new_feature_poly_params = self._feature_poly_params[selected_pts_mask].repeat(N,1,1, 1)
         elif self.feature_trajectory_type == "poly":
             new_features_dc_poly_params = self._features_dc_poly_params[selected_pts_mask].repeat(N,1,1)
-            new_feature_poly_params = self._feature_poly_params[selected_pts_mask].repeat(N,1,1)
+            # new_feature_poly_params = self._feature_poly_params[selected_pts_mask].repeat(N,1,1)
 
         self.densification_postfix(
             new_xyz, 
@@ -911,7 +909,7 @@ class GaussianModel:
             new_rot_poly_params,
             # new_scale_poly_params,
             new_features_dc_poly_params,
-            new_feature_poly_params,
+            # new_feature_poly_params,
         )
 
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
@@ -934,7 +932,7 @@ class GaussianModel:
         new_rot_poly_params = self._rot_poly_params[selected_pts_mask]
         # new_scale_poly_params = self._scale_poly_params[selected_pts_mask]
         new_features_dc_poly_params = self._features_dc_poly_params[selected_pts_mask]
-        new_feature_poly_params = self._feature_poly_params[selected_pts_mask]
+        # new_feature_poly_params = self._feature_poly_params[selected_pts_mask]
 
         self.densification_postfix(
             new_xyz, 
@@ -947,7 +945,7 @@ class GaussianModel:
             new_rot_poly_params,
             # new_scale_poly_params,
             new_features_dc_poly_params,
-            new_feature_poly_params,
+            # new_feature_poly_params,
         )
 
     def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size):

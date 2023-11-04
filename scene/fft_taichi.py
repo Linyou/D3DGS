@@ -19,7 +19,7 @@ class FFT_taichi(torch.nn.Module):
                     if f_id < degree:
                         fac_vec = factors[pid, f_id, dim_id]
                         # noise_vec = noise[pid, dim_id, f_id]
-                        current_w = (f_id+1) * Hz_base * t
+                        current_w = (f_id+1) * 2 * Hz_base * t
                         out[pid, dim_id] += (fac_vec[0] * (ti.sin(current_w)) + fac_vec[1] * (ti.cos(current_w)))
                         
                 
@@ -32,7 +32,7 @@ class FFT_taichi(torch.nn.Module):
                 # if f_id < degree:
                 for f_id in ti.static(range(max_degree)):
                     if f_id < degree:
-                        current_w = (f_id+1) * Hz_base * t
+                        current_w = (f_id+1) * 2 * Hz_base * t
                         gradient = d_out[pid, dim_id]
                         # noise_vec = noise[pid, dim_id, f_id]
                         d_factors[pid, f_id, dim_id, 0] = gradient * (ti.sin(current_w))

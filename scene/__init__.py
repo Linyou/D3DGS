@@ -23,7 +23,7 @@ class Scene:
 
     gaussians : GaussianModel
 
-    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
+    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0], load_img_factor=1.0):
         """b
         :param path: Path to colmap scene main folder.
         """
@@ -47,7 +47,7 @@ class Scene:
             print("Found transforms_train.json file, assuming Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)
         elif os.path.exists(os.path.join(args.source_path, "scene.json")):
-            scene_info = sceneLoadTypeCallbacks["Hyper"](args.source_path, args.white_background, args.eval, gen_ply=True)
+            scene_info = sceneLoadTypeCallbacks["Hyper"](args.source_path, args.white_background, args.eval, gen_ply=True, factor=load_img_factor)
         else:
             print("error path: ", args.source_path)
             assert False, "Could not recognize scene type!"
@@ -68,7 +68,7 @@ class Scene:
 
         if shuffle:
             random.shuffle(scene_info.train_cameras)  # Multi-res consistent random shuffling
-            random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
+            # random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
@@ -77,6 +77,8 @@ class Scene:
             self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args)
             print("Loading Test Cameras")
             self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
+
+        self.video_camera = cameraList_from_camInfos(scene_info.video_cameras,-1,args)
 
         if self.loaded_iter:
             self.gaussians.load_ply(os.path.join(self.model_path,
@@ -97,6 +99,9 @@ class Scene:
 
     def getTestCameras(self, scale=1.0):
         return self.test_cameras[scale]
+    
+    def getVideoCameras(self, scale=1.0):
+        return self.video_camera
     
     
 class DynamicScene:
@@ -178,10 +183,12 @@ class DynamicScene:
                 self.test_cameras[resolution_scale].append(cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args))
 
         if self.loaded_iter:
-            self.gaussians.load_ply(os.path.join(self.model_path,
-                                                           "point_cloud",
-                                                           "iteration_" + str(self.loaded_iter),
-                                                           "point_cloud.ply"))
+            self.gaussians.load_ply(os.path.join(
+                self.model_path, 
+                "point_cloud", 
+                "iteration_" + str(self.loaded_iter),
+                "point_cloud.ply"
+            ))
         else:
             self.gaussians.create_from_pcd(scene_info_list[0].point_cloud, self.cameras_extent)
 
@@ -198,3 +205,6 @@ class DynamicScene:
         if deep_copy:
             return [cam_stack.copy() for cam_stack in self.train_cameras[scale]]
         return self.test_cameras[scale]
+    
+    def getVideoCameras(self, scale=1.0):
+        return self.video_camera

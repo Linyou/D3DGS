@@ -117,7 +117,7 @@ class Load_hyper_data(Dataset):
         if self.split == "train":
             return len(self.i_train)
         elif self.split == "test":
-            return len(self.i_test)//8
+            return len(self.i_test)
         elif self.split == "video":
             # return len(self.i_video)
             return len(self.video_v2)
