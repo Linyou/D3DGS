@@ -23,6 +23,12 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams, FlowParams
+
+import torch.nn.functional as F
+from pytorch_msssim import ms_ssim
+from lpips import LPIPS
+
+from torch.utils.data import DataLoader
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -31,8 +37,15 @@ except ImportError:
     
     
 import taichi as ti
+ti.init(arch=ti.cuda, offline_cache=False)
 
-def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
+lpips_net = LPIPS(net="vgg").to("cuda")
+lpips_norm_fn = lambda x: x[None, ...] * 2 - 1
+lpips_fn = lambda x, y: lpips_net(lpips_norm_fn(x), lpips_norm_fn(y)).mean()
+
+def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, smc_file=None):
+    
+    
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(
@@ -45,11 +58,19 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
         feature_traj_feat_dim=flow_args.feature_traj_feat_dim,
         feature_trajectory_type=flow_args.feature_trajectory_type,
         traj_init=flow_args.traj_init,
+        poly_base_factor=flow_args.poly_base_factor,
+        Hz_base_factor=flow_args.Hz_base_factor,
     )
-    if opt.real_dynamic:
+    if pipe.real_dynamic:
         scene = DynamicScene(dataset, gaussians)
     else:
-        scene = Scene(dataset, gaussians, shuffle=opt.dataset_shuffle, load_img_factor=pipe.load_img_factor)
+        scene = Scene(
+            dataset, 
+            gaussians, 
+            shuffle=pipe.dataset_shuffle, 
+            load_img_factor=pipe.load_img_factor,
+            smc_file=smc_file,
+        )
         
     gaussians.training_setup(opt)
     # if opt.train_rest_frame:
@@ -74,6 +95,8 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
     viewpoint_stack = None
     time_view_stack = None
     ema_loss_for_log = 0.0
+    
+    frist_update_moving_mask = True
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
     if opt.knn_loss:
@@ -95,6 +118,9 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
         #         network_gui.conn = None
 
         iter_start.record()
+        # if iteration > 5000 and frist_update_moving_mask:
+        #     gaussians.update_moving_mask(iteration)
+        #     frist_update_moving_mask = False
 
         gaussians.update_learning_rate(iteration)
         
@@ -105,56 +131,80 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
             
+        # Pick a random Camera
+        if not viewpoint_stack:
+            viewpoint_stack = scene.getTrainCameras()
+            batch_size = opt.batch_size
+            viewpoint_stack_loader = DataLoader(viewpoint_stack, batch_size=batch_size,shuffle=True,num_workers=32,collate_fn=list)
+            loader = iter(viewpoint_stack_loader)
+        if opt.dataloader:
+            try:
+                viewpoint_cams = next(loader)
+            except StopIteration:
+                print("reset dataloader")
+                batch_size = 1
+                loader = iter(viewpoint_stack_loader)
+        else:
+            idx = randint(0, len(viewpoint_stack)-1)
+            viewpoint_cams = [viewpoint_stack[idx]]
+            
         renders = []
         viewspace_points = []
         visibility_filters = []
         radiis = []
         gt_images = []
         arr_lossess = {}
-        for bs_idx in range(opt.batch_size):
+        for viewpoint_cam in viewpoint_cams:
             # Pick a random Camera
-            if opt.real_dynamic:
-                if not time_view_stack or len(time_view_stack) == 0:
-                    time_view_stack = scene.getTrainCameras(deep_copy=True)
-                if opt.batch_on_t:
-                    if bs_idx == 0:
-                        sample_time = randint(0, len(time_view_stack)-1)
-                else:
-                    sample_time = randint(0, len(time_view_stack)-1)
-                # if len(time_view_stack[sample_time]) == 0:
-                #     import pdb; pdb.set_trace()
-                if opt.use_ensure_unique_sample:
-                    viewpoint_cam = time_view_stack[sample_time].pop(randint(0, len(time_view_stack[sample_time])-1))
+            # if pipe.real_dynamic:
+            #     if not time_view_stack or len(time_view_stack) == 0:
+            #         time_view_stack = scene.getTrainCameras(deep_copy=True)
+            #     if pipe.batch_on_t:
+            #         if bs_idx == 0:
+            #             sample_time = randint(0, len(time_view_stack)-1)
+            #     else:
+            #         sample_time = randint(0, len(time_view_stack)-1)
+            #     # if len(time_view_stack[sample_time]) == 0:
+            #     #     import pdb; pdb.set_trace()
+            #     if pipe.use_ensure_unique_sample:
+            #         viewpoint_cam = time_view_stack[sample_time].pop(randint(0, len(time_view_stack[sample_time])-1))
                     
-                    if len(time_view_stack[sample_time]) == 0:
-                        time_view_stack.pop(sample_time)
-                else:
+            #         if len(time_view_stack[sample_time]) == 0:
+            #             time_view_stack.pop(sample_time)
+            #     else:
                     
-                    if opt.aug_frist_end and (iteration % 1000):
-                        viewpoint_cam = time_view_stack[0][randint(0, len(time_view_stack[0])-1)]
-                    else:
-                        viewpoint_cam = time_view_stack[sample_time][randint(0, len(time_view_stack[sample_time])-1)]
+            #         if pipe.aug_frist_end and (iteration % 1000):
+            #             viewpoint_cam = time_view_stack[0][randint(0, len(time_view_stack[0])-1)]
+            #         else:
+            #             viewpoint_cam = time_view_stack[sample_time][randint(0, len(time_view_stack[sample_time])-1)]
                         
-            else:
-                if not viewpoint_stack:
-                    viewpoint_stack = scene.getTrainCameras().copy()
-                viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+            # else:
+            #     if not viewpoint_stack:
+            #         viewpoint_stack = scene.getTrainCameras().copy()
+            #     viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
                 
             time_sample = viewpoint_cam.timestamp
-
-            if iteration > 0:
+            # print(f"time_sample: {time_sample}")
+            if iteration > opt.no_deform_from_iter:
                 arr_lossess = gaussians.set_timestamp(
                     time_sample, 
                     training=True, 
                     training_step=iteration, 
                     get_smooth_loss=False,
                     use_interpolation=False,
-                    random_noise=True,
+                    random_noise=False,
+                    get_moving_loss=False,
+                    masked=False,
+                    # detach_base=False if iteration < opt.densify_until_iter else True,
+                    detach_base=False,
                 )
             else:
                 gaussians.set_no_deform()
             # import pdb; pdb.set_trace()
             # Render
+            
+            # import pdb; pdb.set_trace()
+            
             if (iteration - 1) == debug_from:
                 pipe.debug = True
             render_pkg = render(viewpoint_cam, gaussians, pipe, background)
@@ -170,24 +220,33 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
         # gt_image = viewpoint_cam.original_image.cuda()
         images = torch.stack(renders)
         gt_images = torch.stack(gt_images)
+        
+        # if iteration < 20000:
+        #     Ll1 = l2_loss(images, gt_images)
+        #     loss = Ll1
+        # else:
         Ll1 = l1_loss(images, gt_images)
+        # Ll1 = l2_loss(images, gt_images) * 1e1
         # loss = Ll1
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(images, gt_images))
         
         # get the extra losses from the gaussians
         for arr_loss_key in arr_lossess:
-            loss += 0.1*arr_lossess[arr_loss_key]
+            loss += arr_lossess[arr_loss_key]
             
-        if opt.train_rest_frame and (iteration > 0):
+        if pipe.train_rest_frame and (iteration > 0):
             reg_loss = gaussians.regularization_losses()
             loss += reg_loss
         else:
             reg_loss = None
             
-        if opt.knn_loss:
-            knn_loss = gaussians.knn_losses()
-            loss += 0.1*knn_loss
+        if opt.knn_loss and iteration > opt.densify_until_iter:
+            knn_loss = gaussians.knn_losses().mean()
+            loss += knn_loss
             # print("knn_loss: ", knn_loss)
+            
+        if loss > 1000:
+            continue
             
         loss.backward()
 
@@ -203,13 +262,16 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
                     bar_info.update({"RegLoss": f"{ema_reg_loss_for_log:.{7}f}"})
                 bar_info.update({"Loss": f"{ema_loss_for_log:.{7}f}"})
                 bar_info.update({"NumGass": f"{gaussians._xyz.shape[0]}"})
+                # if iteration > 5000:
+                #     bar_info.update({"Mask num": f"{gaussians.moving_mask.sum()}"})
+                #     bar_info.update({"Mask threshold": f"{gaussians.threshold:.{5}f}"})
                 progress_bar.set_postfix(bar_info)
                 progress_bar.update(10)
             if iteration == opt.iterations:
                 progress_bar.close()
 
             # Log and save
-            if opt.real_dynamic:
+            if pipe.real_dynamic:
                 training_report_real_dynamic(tb_writer, iteration, Ll1, loss, l1_loss, reg_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             else:
                 training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
@@ -219,7 +281,7 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
                 scene.save(iteration)
 
             # Densification
-            if (iteration < opt.densify_until_iter) and not opt.train_rest_frame:
+            if (iteration < opt.densify_until_iter) and not pipe.train_rest_frame:
                 
                 bs = len(viewspace_points)
                 for i in range(bs):
@@ -235,22 +297,22 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
                 # Keep track of max radii in image-space for pruning
                 # gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
                 # gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
-                # densification_interval = opt.densification_interval
-                if iteration > 100000:
-                    densification_interval = 1000
-                    opc_reset_interval = 1000000
-                    densify_grad_threshold = opt.densify_grad_threshold
-                else:
-                    densification_interval = opt.densification_interval
-                    opc_reset_interval = opt.opacity_reset_interval
-                    densify_grad_threshold = opt.densify_grad_threshold
+                densification_interval = opt.densification_interval
+                opc_reset_interval = opt.opacity_reset_interval
+                densify_grad_threshold = opt.densify_grad_threshold
+                min_opacity = opt.min_opacity
+                # if iteration > 5000:
+                #     densification_interval = 1000
                 if iteration > opt.densify_from_iter and iteration % densification_interval == 0:
                     size_threshold = 20 if iteration > 3000 else None
-                    gaussians.densify_and_prune(densify_grad_threshold, opt.min_opacity, scene.cameras_extent, size_threshold)
-                    if opt.knn_loss:
-                        gaussians.get_knn_index()
+                    gaussians.densify_and_prune(densify_grad_threshold, min_opacity, scene.cameras_extent, size_threshold)
+                    # if iteration > 5000:
+                    #     gaussians.update_moving_mask(iteration)
                 if iteration % opc_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
+                
+            if iteration == opt.densify_until_iter and opt.knn_loss:
+                gaussians.get_knn_index()
 
             # Optimizer step
             if iteration < opt.iterations:
@@ -295,17 +357,12 @@ def training_report_real_dynamic(tb_writer, iteration, Ll1, loss, l1_loss, reg_l
         if reg_loss is not None:
             tb_writer.add_scalar('train_loss_patches/reg_loss', reg_loss.item(), iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
-        
-
-    # Report test and samples of training set
-    if iteration % testing_iterations == 0:
-        torch.cuda.empty_cache()
 
     # Report test and samples of training set
     if iteration % testing_iterations == 0:
         torch.cuda.empty_cache()
         validation_configs = (
-            {'name': 'test', 'cameras' : [scene.getTestCameras()[idx % len(scene.getTestCameras())][0] for idx in range(0, len(scene.getTestCameras()), 10)]}, 
+            {'name': 'test', 'cameras' : [scene.getTestCameras()[idx % len(scene.getTestCameras())] for idx in range(0, len(scene.getTestCameras()), 10)]}, 
             {'name': 'train', 'cameras' : []}
         )
         
@@ -314,6 +371,8 @@ def training_report_real_dynamic(tb_writer, iteration, Ll1, loss, l1_loss, reg_l
             if config['cameras'] and len(config['cameras']) > 0:
                 l1_test = 0.0
                 psnr_test = 0.0
+                ssims_test = 0.0
+                lpips_test = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
                     # import pdb; pdb.set_trace()
                     scene.gaussians.set_timestamp(viewpoint.timestamp)
@@ -323,12 +382,20 @@ def training_report_real_dynamic(tb_writer, iteration, Ll1, loss, l1_loss, reg_l
                     tb_writer.add_images(config['name'] + "_view_{}_frame_{}/ground_truth".format(viewpoint.image_name, viewpoint.timestamp), gt_image[None], global_step=iteration)
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
+                    ssims_test += ms_ssim(
+                        image[None], gt_image[None], data_range=1, size_average=True
+                    )   
+                    lpips_test += lpips_fn(image, gt_image).item()
                 psnr_test /= len(config['cameras'])
+                ssims_test /= len(config['cameras'])
+                lpips_test /= len(config['cameras'])
                 l1_test /= len(config['cameras'])          
-                print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
+                print("\n[ITER {}] Evaluating {}: L1 {} PSNR {} SSIMS {} LPIPS {}".format(iteration, config['name'], l1_test, psnr_test, ssims_test, lpips_test))
                 if tb_writer:
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
+                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - ssims', ssims_test, iteration)
+                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - lpips', lpips_test, iteration)
 
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
@@ -353,6 +420,8 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
             if config['cameras'] and len(config['cameras']) > 0:
                 l1_test = 0.0
                 psnr_test = 0.0
+                ssims_test = 0.0
+                lpips_test = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
                     scene.gaussians.set_timestamp(viewpoint.timestamp)
                     image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
@@ -363,12 +432,20 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                             tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
+                    ssims_test += ms_ssim(
+                        image[None], gt_image[None], data_range=1, size_average=True
+                    )   
+                    lpips_test += lpips_fn(image, gt_image).item()
                 psnr_test /= len(config['cameras'])
+                ssims_test /= len(config['cameras'])
+                lpips_test /= len(config['cameras'])
                 l1_test /= len(config['cameras'])          
-                print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
+                print("\n[ITER {}] Evaluating {}: L1 {} PSNR {} SSIMS {} LPIPS {}".format(iteration, config['name'], l1_test, psnr_test, ssims_test, lpips_test))
                 if tb_writer:
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
+                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - ssims', ssims_test, iteration)
+                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - lpips', lpips_test, iteration)
 
 
         if tb_writer:
@@ -377,7 +454,6 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
         torch.cuda.empty_cache()
 
 if __name__ == "__main__":
-    ti.init(arch=ti.cuda, offline_cache=False)
     
     # Set up command line argument parser
     parser = ArgumentParser(description="Training script parameters")
@@ -395,6 +471,7 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_iterations", type=int, default=10000)
     parser.add_argument("--start_checkpoint", type=str, default = None)
     parser.add_argument("--configs", type=str, default = "")
+    parser.add_argument("--smc_file", type=str, default = None)
     args = parser.parse_args(sys.argv[1:])
     # args.save_iterations.append(args.iterations)
     
@@ -411,7 +488,18 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training
     # network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), ff.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
+    training(
+        lp.extract(args), 
+        op.extract(args), 
+        pp.extract(args), 
+        ff.extract(args), 
+        args.test_iterations, 
+        args.save_iterations, 
+        args.checkpoint_iterations, 
+        args.start_checkpoint, 
+        args.debug_from, 
+        args.smc_file,
+    )
 
     # All done
     print("\nTraining complete.")

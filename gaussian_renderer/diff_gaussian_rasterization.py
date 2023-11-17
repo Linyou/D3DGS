@@ -5,19 +5,20 @@ import torch
 # try:
 #     from . import _C
 # except Exception as e:
-from torch.utils.cpp_extension import load
-parent_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "submodules/diff-gaussian-rasterization")
-_C = load(
-    name='diff_gaussian_rasterization',
-    extra_cuda_cflags=["-I " + os.path.join(parent_dir, "third_party/glm/")],
-    sources=[
-        os.path.join(parent_dir, "cuda_rasterizer/rasterizer_impl.cu"),
-        os.path.join(parent_dir, "cuda_rasterizer/forward.cu"),
-        os.path.join(parent_dir, "cuda_rasterizer/backward.cu"),
-        os.path.join(parent_dir, "rasterize_points.cu"),
-        os.path.join(parent_dir, "ext.cpp")],
-    verbose=True)
+# from torch.utils.cpp_extension import load
+# parent_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "submodules/diff-gaussian-rasterization")
+# _C = load(
+#     name='diff_gaussian_rasterization',
+#     extra_cuda_cflags=["-I " + os.path.join(parent_dir, "third_party/glm/")],
+#     sources=[
+#         os.path.join(parent_dir, "cuda_rasterizer/rasterizer_impl.cu"),
+#         os.path.join(parent_dir, "cuda_rasterizer/forward.cu"),
+#         os.path.join(parent_dir, "cuda_rasterizer/backward.cu"),
+#         os.path.join(parent_dir, "rasterize_points.cu"),
+#         os.path.join(parent_dir, "ext.cpp")],
+#     verbose=True)
 
+from diff_gaussian_rasterization import _C
 
 def cpu_deep_copy_tuple(input_tuple):
     copied_tensors = [item.cpu().clone() if isinstance(item, torch.Tensor) else item for item in input_tuple]

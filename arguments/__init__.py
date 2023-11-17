@@ -68,6 +68,13 @@ class PipelineParams(ParamGroup):
         self.compute_cov3D_python = False
         self.debug = False
         self.load_img_factor = 1.0
+        self.real_dynamic = False
+        self.dataset_shuffle = False
+        self.use_ensure_unique_sample = False
+        self.aug_frist_end = False
+        self.batch_on_t = False
+        self.train_rest_frame = False
+        self.after_second_frame = False
         super().__init__(parser, "Pipeline Parameters")
 
 class OptimizationParams(ParamGroup):
@@ -89,15 +96,10 @@ class OptimizationParams(ParamGroup):
         self.densify_until_iter = 15_000
         self.densify_grad_threshold = 0.0002
         self.min_opacity = 0.005
-        self.train_rest_frame = False
-        self.after_second_frame = False
-        self.real_dynamic = False
         self.batch_size=1
-        self.use_ensure_unique_sample = False
-        self.aug_frist_end = False
-        self.dataset_shuffle = False
         self.knn_loss = False
-        self.batch_on_t = False
+        self.dataloader=False
+        self.no_deform_from_iter=0
         super().__init__(parser, "Optimization Parameters")
         
 class FlowParams(ParamGroup):
@@ -109,6 +111,8 @@ class FlowParams(ParamGroup):
         self.feature_traj_feat_dim = 2
         self.feature_trajectory_type = 'fft'
         self.traj_init = 'zero'
+        self.poly_base_factor = 1.0
+        self.Hz_base_factor = 1.0
         super().__init__(parser, "Gaussion Flow Parameters")
 
 def get_combined_args(parser : ArgumentParser):

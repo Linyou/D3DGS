@@ -22,6 +22,8 @@ def loadCam(args, id, cam_info, resolution_scale):
         loaded_mask = None
     else:
         orig_w, orig_h = cam_info.image.size
+        
+        # resolution = (int(orig_w), int(orig_h))
 
         if args.resolution in [1, 2, 4, 8]:
             resolution = round(orig_w/(resolution_scale * args.resolution)), round(orig_h/(resolution_scale * args.resolution))

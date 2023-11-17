@@ -32,7 +32,8 @@ class CameraInfo(NamedTuple):
     width: int
     height: int
     timestamp : float
-    focal_length: float
+    focal_length_x: float
+    focal_length_y: float
     cx: float
     cy: float
 
@@ -83,6 +84,8 @@ class Load_hyper_data(Dataset):
         self.all_time = [meta_json[i]['warp_id'] for i in self.all_img]
         max_time = max(self.all_time)
         # self.all_time = [meta_json[i]['warp_id']/max_time for i in self.all_img]
+        
+        # import pdb; pdb.set_trace()
         self.selected_time = set(self.all_time)
         self.ratio = ratio
         self.max_time = max(self.all_time)
@@ -144,7 +147,8 @@ class Load_hyper_data(Dataset):
             image_name=image_name, 
             width=w, height=h, 
             timestamp=time,
-            focal_length=camera.focal_length,
+            focal_length_x=camera.focal_length,
+            focal_length_y=camera.focal_length,
             cx=camera.principal_point_x,
             cy=camera.principal_point_y,
         )
@@ -203,7 +207,8 @@ class Load_hyper_data(Dataset):
             image_name=image_name, 
             width=w, height=h, 
             timestamp=time,
-            focal_length=camera.focal_length,
+            focal_length_x=camera.focal_length,
+            focal_length_y=camera.focal_length,
             cx=camera.principal_point_x,
             cy=camera.principal_point_y,
         )
@@ -239,7 +244,8 @@ def format_hyper_data(data_class, split):
             width=int(data_class.w), 
             height=int(data_class.h), 
             timestamp=time,
-            focal_length=camera.focal_length,
+            focal_length_x=camera.focal_length,
+            focal_length_y=camera.focal_length,
             cx=camera.principal_point_x,
             cy=camera.principal_point_y,
         )
