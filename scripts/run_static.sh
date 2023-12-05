@@ -1,0 +1,1 @@
+./SIBR_viewers/install/bin/SIBR_gaussianViewer_app -m output/3ac7b662-c

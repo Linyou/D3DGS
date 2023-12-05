@@ -55,11 +55,16 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
         xyz_trajectory_type=flow_args.xyz_trajectory_type,
         rot_traj_feat_dim=flow_args.rot_traj_feat_dim,
         rot_trajectory_type=flow_args.rot_trajectory_type,
+        scale_traj_feat_dim=flow_args.scale_traj_feat_dim,
+        scale_trajectory_type=flow_args.scale_trajectory_type,
+        opc_traj_feat_dim=flow_args.opc_traj_feat_dim,
+        opc_trajectory_type=flow_args.opc_trajectory_type,
         feature_traj_feat_dim=flow_args.feature_traj_feat_dim,
         feature_trajectory_type=flow_args.feature_trajectory_type,
         traj_init=flow_args.traj_init,
         poly_base_factor=flow_args.poly_base_factor,
         Hz_base_factor=flow_args.Hz_base_factor,
+        normliaze=flow_args.normliaze,
     )
     if pipe.real_dynamic:
         scene = DynamicScene(dataset, gaussians)
@@ -72,7 +77,7 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
             smc_file=smc_file,
         )
         
-    gaussians.training_setup(opt)
+    gaussians.training_setup(opt, flow_args)
     # if opt.train_rest_frame:
     #     gaussians.fix_params_rest_of_frames()
     frame_id = scene.model_path.split("/")[-1]
@@ -99,6 +104,8 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
     frist_update_moving_mask = True
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
+    knn_loss = None
+    scale_loss = None
     if opt.knn_loss:
         gaussians.get_knn_index()
     for iteration in range(first_iter, opt.iterations + 1):        
@@ -131,17 +138,26 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
         if iteration % 1000 == 0:
             gaussians.oneupSHdegree()
             
+        if iteration == opt.no_deform_from_iter:
+            viewpoint_stack = None
+            
         # Pick a random Camera
         if not viewpoint_stack:
-            viewpoint_stack = scene.getTrainCameras()
+            if iteration < opt.no_deform_from_iter:
+                if scene.train_cameras_0 is not None:
+                    viewpoint_stack= scene.getTrainCameras_0()
+                else:
+                    viewpoint_stack = scene.getTrainCameras()
+            else:
+                viewpoint_stack = scene.getTrainCameras()
             batch_size = opt.batch_size
-            viewpoint_stack_loader = DataLoader(viewpoint_stack, batch_size=batch_size,shuffle=True,num_workers=32,collate_fn=list)
+            viewpoint_stack_loader = DataLoader(viewpoint_stack, batch_size=batch_size,shuffle=False,num_workers=4,collate_fn=list)
             loader = iter(viewpoint_stack_loader)
         if opt.dataloader:
             try:
                 viewpoint_cams = next(loader)
             except StopIteration:
-                print("reset dataloader")
+                # print("reset dataloader")
                 batch_size = 1
                 loader = iter(viewpoint_stack_loader)
         else:
@@ -186,19 +202,22 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
             time_sample = viewpoint_cam.timestamp
             # print(f"time_sample: {time_sample}")
             if iteration > opt.no_deform_from_iter:
+                gaussians.need_deformed = True
                 arr_lossess = gaussians.set_timestamp(
                     time_sample, 
                     training=True, 
                     training_step=iteration, 
-                    get_smooth_loss=False,
-                    use_interpolation=False,
-                    random_noise=False,
-                    get_moving_loss=False,
-                    masked=False,
-                    # detach_base=False if iteration < opt.densify_until_iter else True,
+                    get_smooth_loss=flow_args.get_smooth_loss,
+                    use_interpolation=flow_args.use_interpolation,
+                    random_noise=flow_args.random_noise,
+                    get_moving_loss=flow_args.get_moving_loss,
+                    masked=flow_args.masked,
+                    # detach_base=True if iteration > opt.densify_until_iter else False,
                     detach_base=False,
                 )
+                # testing_iterations = 1
             else:
+                gaussians.need_deformed = False
                 gaussians.set_no_deform()
             # import pdb; pdb.set_trace()
             # Render
@@ -241,8 +260,12 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
             reg_loss = None
             
         if opt.knn_loss and iteration > opt.densify_until_iter:
-            knn_loss = gaussians.knn_losses().mean()
+            knn_loss = gaussians.knn_losses()
             loss += knn_loss
+            
+        if opt.scale_loss:
+            scale_loss = gaussians.scale_losses()
+            loss += scale_loss
             # print("knn_loss: ", knn_loss)
             
         if loss > 1000:
@@ -260,6 +283,10 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
                 if reg_loss is not None:
                     ema_reg_loss_for_log = 0.4 * reg_loss.item() + 0.6 * ema_loss_for_log
                     bar_info.update({"RegLoss": f"{ema_reg_loss_for_log:.{7}f}"})
+                if knn_loss is not None:
+                    bar_info.update({"KnnLoss": f"{knn_loss:.{7}f}"})
+                if scale_loss is not None:
+                    bar_info.update({"ScaleLoss": f"{scale_loss:.{7}f}"})
                 bar_info.update({"Loss": f"{ema_loss_for_log:.{7}f}"})
                 bar_info.update({"NumGass": f"{gaussians._xyz.shape[0]}"})
                 # if iteration > 5000:
@@ -390,7 +417,7 @@ def training_report_real_dynamic(tb_writer, iteration, Ll1, loss, l1_loss, reg_l
                 ssims_test /= len(config['cameras'])
                 lpips_test /= len(config['cameras'])
                 l1_test /= len(config['cameras'])          
-                print("\n[ITER {}] Evaluating {}: L1 {} PSNR {} SSIMS {} LPIPS {}".format(iteration, config['name'], l1_test, psnr_test, ssims_test, lpips_test))
+                print(f"\n[ITER {iteration}] Evaluating {config['name']}: L1 {l1_test:.5f} PSNR {psnr_test:.5f} SSIMS {ssims_test:.5f} LPIPS {lpips_test:.5f}")
                 if tb_writer:
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
@@ -428,8 +455,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
                     if tb_writer:
                         tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
-                        if iteration == testing_iterations:
-                            tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
+                        tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
                     ssims_test += ms_ssim(
@@ -440,7 +466,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                 ssims_test /= len(config['cameras'])
                 lpips_test /= len(config['cameras'])
                 l1_test /= len(config['cameras'])          
-                print("\n[ITER {}] Evaluating {}: L1 {} PSNR {} SSIMS {} LPIPS {}".format(iteration, config['name'], l1_test, psnr_test, ssims_test, lpips_test))
+                print(f"\n[ITER {iteration}] Evaluating {config['name']}: L1 {l1_test:.5f} PSNR {psnr_test:.5f} SSIMS {ssims_test:.5f} LPIPS {lpips_test:.5f}")
                 if tb_writer:
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
@@ -466,7 +492,7 @@ if __name__ == "__main__":
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", type=int, default=5000)
-    parser.add_argument("--save_iterations", type=int, default=5000)
+    parser.add_argument("--save_iterations", type=int, default=10000)
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", type=int, default=10000)
     parser.add_argument("--start_checkpoint", type=str, default = None)
@@ -480,6 +506,17 @@ if __name__ == "__main__":
         from utils.params_utils import merge_hparams
         config = mmcv.Config.fromfile(args.configs)
         args = merge_hparams(args, config)
+        
+        # copy config to output
+        import shutil
+        # get file name of the config
+        os.makedirs(args.model_path)
+        config_filename = args.configs.split('/')[-1]
+        shutil.copyfile(
+            args.configs, 
+            os.path.join(args.model_path, config_filename),
+        )
+        
     print("Optimizing " + args.model_path)
 
     # Initialize system state (RNG)

@@ -93,6 +93,7 @@ class Scene:
         self.cameras_extent = scene_info.nerf_normalization["radius"] * radius_extent
 
 
+        self.train_cameras_0 = None
         if self.is_hyper or self.is_blender:
             for resolution_scale in resolution_scales:
                 print("Loading Training Cameras")
@@ -102,6 +103,7 @@ class Scene:
                 self.gaussians.factor_t = True
         elif self.is_dynerf or self.is_dna:
             self.train_cameras = FourDGSdataset(scene_info.train_cameras, args)
+            self.train_cameras_0 = FourDGSdataset(scene_info.train_cameras_0, args)
             self.test_cameras = FourDGSdataset(scene_info.test_cameras, args)
             
         self.video_camera = None
@@ -112,7 +114,7 @@ class Scene:
         self.gaussians.normalize_timestamp = normalize_time
         print(f"Max frames: {scene_info.maxtime}, normalize time: {normalize_time}")
         
-        if self.is_dna or self.is_hyper:
+        if self.is_hyper or self.is_dna or self.is_blender:
             self.gaussians.factor_t = True
 
         if self.loaded_iter:
@@ -134,6 +136,9 @@ class Scene:
             return self.train_cameras
         else:
             return self.train_cameras[scale]
+        
+    def getTrainCameras_0(self, scale=1.0):
+        return self.train_cameras_0
 
     def getTestCameras(self, scale=1.0):
         if self.is_dynerf or self.is_dna:
@@ -198,19 +203,19 @@ class DynamicScene:
         # import pdb; pdb.set_trace()
 
         scene_info = scene_info_list[0]
-        if not self.loaded_iter:
-            with open(scene_info.ply_path, 'rb') as src_file, open(os.path.join(self.model_path, "input.ply") , 'wb') as dest_file:
-                dest_file.write(src_file.read())
-            json_cams = []
-            camlist = []
-            if scene_info.test_cameras:
-                camlist.extend(scene_info.test_cameras)
-            if scene_info.train_cameras:
-                camlist.extend(scene_info.train_cameras)
-            for id, cam in enumerate(camlist):
-                json_cams.append(camera_to_JSON(id, cam))
-            with open(os.path.join(self.model_path, "cameras.json"), 'w') as file:
-                json.dump(json_cams, file)
+        # if not self.loaded_iter:
+        #     with open(scene_info.ply_path, 'rb') as src_file, open(os.path.join(self.model_path, "input.ply") , 'wb') as dest_file:
+        #         dest_file.write(src_file.read())
+        #     json_cams = []
+        #     camlist = []
+        #     if scene_info.test_cameras:
+        #         camlist.extend(scene_info.test_cameras)
+        #     if scene_info.train_cameras:
+        #         camlist.extend(scene_info.train_cameras)
+        #     for id, cam in enumerate(camlist):
+        #         json_cams.append(camera_to_JSON(id, cam))
+        #     with open(os.path.join(self.model_path, "cameras.json"), 'w') as file:
+        #         json.dump(json_cams, file)
 
         if shuffle:
             for scene_info in scene_info_list:
@@ -229,6 +234,7 @@ class DynamicScene:
         
         self.train_cameras = FourDGSdatasetDY(scene_info_list, args, split="train")
         self.test_cameras = FourDGSdatasetDY(scene_info_list, args, split="test")
+        self.train_cameras_0 = FourDGSdatasetDY(scene_info_list[:1], args, split="train")
 
         self.gaussians.max_frames = 300
         if self.loaded_iter:
@@ -240,6 +246,8 @@ class DynamicScene:
             ))
         else:
             self.gaussians.create_from_pcd(scene_info_list[0].point_cloud, self.cameras_extent)
+            
+        # self.gaussians.factor_t = True
             
 
     def save(self, iteration):
@@ -258,3 +266,6 @@ class DynamicScene:
     
     def getVideoCameras(self, scale=1.0):
         return self.video_camera
+    
+    def getTrainCameras_0(self, scale=1.0):
+        return self.train_cameras_0

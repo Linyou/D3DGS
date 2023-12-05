@@ -39,7 +39,7 @@ class FourDGSdataset(Dataset):
             R=R, T=T, 
             FoVx=FovX, FoVy=FovY, 
             image=image, gt_alpha_mask=None,
-            image_name=f"{index}", uid=index, 
+            image_name=caminfo.image_name, uid=index, 
             data_device=torch.device("cuda"),
             timestamp=time,
             extra_cam_info=caminfo if self.args.use_extra_cam_info else None,
@@ -79,7 +79,7 @@ class FourDGSdatasetDY(Dataset):
         time = caminfo.timestamp
         image = Image.open(caminfo.image)
         orig_w, orig_h = image.size
-        resolution = (int(orig_w/2), int(orig_h/2))
+        resolution = (int(orig_w), int(orig_h))
         resized_image_rgb = PILtoTorch(image, resolution)
         gt_image = resized_image_rgb[:3, ...]
 

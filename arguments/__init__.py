@@ -98,6 +98,7 @@ class OptimizationParams(ParamGroup):
         self.min_opacity = 0.005
         self.batch_size=1
         self.knn_loss = False
+        self.scale_loss = False
         self.dataloader=False
         self.no_deform_from_iter=0
         super().__init__(parser, "Optimization Parameters")
@@ -108,11 +109,27 @@ class FlowParams(ParamGroup):
         self.xyz_trajectory_type = 'poly'
         self.rot_traj_feat_dim = 20
         self.rot_trajectory_type = 'fft'
+        self.scale_traj_feat_dim = 20
+        self.scale_trajectory_type = 'fft'
+        self.opc_traj_feat_dim = 20
+        self.opc_trajectory_type = 'fft'
         self.feature_traj_feat_dim = 2
         self.feature_trajectory_type = 'fft'
         self.traj_init = 'zero'
         self.poly_base_factor = 1.0
         self.Hz_base_factor = 1.0
+        self.normliaze = False
+        self.get_smooth_loss=False
+        self.use_interpolation=False
+        self.random_noise=False
+        self.get_moving_loss=False
+        self.masked=False
+        #lr
+        # self.xyz_lr = 0.0001
+        # self.rot_lr = 0.0001
+        # self.scale_lr = 0.0001
+        # self.opc_lr = 0.0001
+        # self.feature_lr = 0.0001
         super().__init__(parser, "Gaussion Flow Parameters")
 
 def get_combined_args(parser : ArgumentParser):

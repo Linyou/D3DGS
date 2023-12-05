@@ -63,6 +63,7 @@ class SceneInfo(NamedTuple):
     train_cameras: list
     test_cameras: list
     video_cameras: list
+    train_cameras_0: list
     nerf_normalization: dict
     ply_path: str
     maxtime: int
@@ -200,6 +201,8 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, suppress=False, dynamic=
     # else:
     train_cam_infos = cam_infos[1:]
     test_cam_infos = cam_infos[0:1]
+    
+    val_poses = get_spiral(poses, self.near_fars, N_views=N_views)
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
 
@@ -235,6 +238,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, suppress=False, dynamic=
         point_cloud=pcd,
         train_cameras=train_cam_infos,
         test_cameras=test_cam_infos,
+        train_cameras_0=None,
         nerf_normalization=nerf_normalization,
         ply_path=ply_path,
         maxtime=None,
@@ -304,15 +308,10 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
     shs = np.random.random((num_pts, 3)) / 255.0
     pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
 
-    storePly(ply_path, xyz, SH2RGB(shs) * 255)
-    try:
-        pcd = fetchPly(ply_path)
-    except:
-        pcd = None
-
     scene_info = SceneInfo(
         point_cloud=pcd,
         train_cameras=train_cam_infos,
+        train_cameras_0=None,
         test_cameras=test_cam_infos,
         video_cameras=video_cam_infos,
         nerf_normalization=nerf_normalization,
@@ -361,6 +360,7 @@ def readHyperDataInfos(datadir,use_bg_points,eval, gen_ply=False, factor=1.0):
     scene_info = SceneInfo(
         point_cloud=pcd,
         train_cameras=train_cam_infos,
+        train_cameras_0=None,
         test_cameras=test_cam_infos,
         video_cameras=video_cam_infos,
         nerf_normalization=nerf_normalization,
@@ -493,6 +493,7 @@ def readdynerfInfo(datadir,use_bg_points,eval):
     scene_info = SceneInfo(
         point_cloud=pcd,
         train_cameras=train_dataset,
+        train_cameras_0=None,
         test_cameras=test_dataset,
         video_cameras=val_cam_infos,
         nerf_normalization=nerf_normalization,
@@ -517,18 +518,24 @@ def readdnaInfo(datadir, anno_smc, factor=1.0):
         anno_smc,
         "test",
         factor,
+    )  
+    train_dataset_0 = DNARendering(
+        datadir,
+        anno_smc,
+        "train",
+        factor,
+        only_0=True,
     )     
-    train_cam_infos = format_infos_dna(train_dataset, "train")
-    nerf_normalization = getNerfppNorm(train_cam_infos)
+    # train_cam_infos = format_infos_dna(train_dataset, "train")
+    # nerf_normalization = getNerfppNorm(train_cam_infos)
     # create pcd
     # if not os.path.exists(ply_path):
     # Since this data set has no colmap data, we start with random points
-    num_pts = 50000
+    num_pts = 10000
+    radius = 3.0
     print(f"Generating random point cloud ({num_pts})...")
-    radius = nerf_normalization["radius"]
     print("radius: ", radius)
-    radius = 0.5
-    nerf_normalization["radius"] = radius
+    nerf_normalization = {"radius": radius}
     # We create random points inside the bounds of the synthetic Blender scenes
     xyz = np.random.random((num_pts, 3)) * 2 * radius - radius
     shs = np.random.random((num_pts, 3)) / 255.0
@@ -544,10 +551,11 @@ def readdnaInfo(datadir, anno_smc, factor=1.0):
         point_cloud=pcd,
         train_cameras=train_dataset,
         test_cameras=test_dataset,
+        train_cameras_0=train_dataset_0,
         video_cameras=None,
         nerf_normalization=nerf_normalization,
         ply_path=ply_path,
-        maxtime=train_dataset.time_number
+        maxtime=train_dataset.time_number,
     )
     return scene_info
 

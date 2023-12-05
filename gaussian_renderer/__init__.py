@@ -15,7 +15,7 @@ from .diff_gaussian_rasterization import GaussianRasterizationSettings, Gaussian
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
+def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, render_xyz=False):
     """
     Render the scene. 
     
@@ -45,6 +45,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         sh_degree=pc.active_sh_degree,
         campos=viewpoint_camera.camera_center.cuda(),
         prefiltered=False,
+        computer_xyz=render_xyz,
         debug=pipe.debug
     )
 
@@ -58,12 +59,14 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # scaling / rotation by the rasterizer.
     scales = None
     rotations = None
+    rotations2 = None
     cov3D_precomp = None
     if pipe.compute_cov3D_python:
         cov3D_precomp = pc.get_covariance(scaling_modifier)
     else:
         scales = pc.get_scaling
         rotations = pc.get_rotation
+        # rotations2 = pc.get_rotation2
 
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
@@ -82,7 +85,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    rendered_image, radii = rasterizer(
+    num_rendered, rendered_image, opacity, depth, render_xyz, radii = rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
@@ -90,12 +93,17 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         opacities = opacity,
         scales = scales,
         rotations = rotations,
+        # rotations2 = rotations2,
         cov3D_precomp = cov3D_precomp)
 
     # import pdb; pdb.set_trace()
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     return {"render": rendered_image,
+            "num_rendered": num_rendered,
+            "opacity": opacity,
+            "depth": depth,
+            "render_xyz": render_xyz,
             "viewspace_points": screenspace_points,
             "visibility_filter" : radii > 0,
             "radii": radii}

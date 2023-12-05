@@ -16,21 +16,23 @@ class FFTPloy_taichi(torch.nn.Module):
             out: ti.types.ndarray(), 
             degree: int
         ):
-            for pid, dim_id, f_id in ti.ndrange(
+            for pid, dim_id in ti.ndrange(
                 factors.shape[0], 
                 factors.shape[2],
-                max_degree
+                # max_degree
             ):
-                
-                # for f_id in ti.static(range(max_degree)):
+                out_sum = 0.
+                for f_id in ti.static(range(max_degree)):
                     if f_id < degree:
-                        x = poly_base_factor * t
+                        x1 = poly_base_factor * t
                         f = factors[pid, f_id, dim_id]
-                        poly = f[0] * ti.pow(x, f_id)
-                        x = (f_id) * 2 * Hz_base * t
-                        sin = f[1] * ti.sin(x)
-                        cos = f[2] * ti.cos(x)
-                        out[pid, dim_id] += poly + sin + cos
+                        poly = f[0] * ti.pow(x1, f_id)
+                        x2 = (f_id) * 2 * Hz_base * t
+                        sin = f[1] * ti.sin(x2)
+                        cos = f[2] * ti.cos(x2)
+                        out_sum += poly + sin + cos
+                        # out[pid, dim_id] += poly + sin + cos
+                out[pid, dim_id] = out_sum
                         
         self._fft_poly_kernel_fwd = _fft_poly_kernel_fwd
                 
@@ -51,12 +53,12 @@ class FFTPloy_taichi(torch.nn.Module):
                 # for f_id in ti.static(range(max_degree)):
                 if f_id < degree:
                     # f = factors[pid, f_id, dim_id]
-                    x = poly_base_factor * t #* f[1] + f[2]
+                    x1 = poly_base_factor * t #* f[1] + f[2]
                     d_o = d_out[pid, dim_id]
-                    d_factors[pid, f_id, dim_id, 0] = d_o * ti.pow(x, f_id)
-                    x = (f_id) * 2 * Hz_base * t
-                    d_factors[pid, f_id, dim_id, 1] = d_o*ti.sin(x)
-                    d_factors[pid, f_id, dim_id, 2] = d_o*ti.cos(x)
+                    d_factors[pid, f_id, dim_id, 0] = d_o * ti.pow(x1, f_id)
+                    x2 = (f_id) * 2 * Hz_base * t
+                    d_factors[pid, f_id, dim_id, 1] = d_o*ti.sin(x2)
+                    d_factors[pid, f_id, dim_id, 2] = d_o*ti.cos(x2)
                 else:
                     d_factors[pid, f_id, dim_id, 0] = 0.0
                     d_factors[pid, f_id, dim_id, 1] = 0.0
@@ -69,7 +71,7 @@ class FFTPloy_taichi(torch.nn.Module):
                 ctx.save_for_backward(factors)
                 ctx.t = t
                 ctx.degree = degree
-                out = torch.zeros(
+                out = torch.empty(
                     (factors.shape[0], factors.shape[2]), 
                     dtype=torch.float32, 
                     device=factors.device
@@ -94,4 +96,4 @@ class FFTPloy_taichi(torch.nn.Module):
             factors.contiguous(), 
             timestamp,
             degree,
-        )
+        ) / self.max_degree
