@@ -4,6 +4,8 @@ import os
 import time
 from datetime import datetime
 
+data_root = "/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/"
+
 timestamp = time.time()
 formatted_timestamp = datetime.fromtimestamp(timestamp).strftime('%Y%m%d-%H%M%S')
 
@@ -39,42 +41,42 @@ def run_excu(name_prefix, path):
     ]
     safe_run(command)
     
-hyper_list = [
-    # {
-    #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/lego",
-    #     "name": "lego",
-    # },
-    # {
-    #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/bouncingballs",
-    #     "name": "bouncingballs",
-    # },
-    # {
-    #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/hellwarrior",
-    #     "name": "hellwarrior",
-    # },
-    # {
-    #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/hook",
-    #     "name": "hook",
-    # },
-    # {
-    #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/jumpingjacks",
-    #     "name": "jumpingjacks",
-    # },
-    # {
-    #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/mutant",
-    #     "name": "mutant",
-    # },
-    # {
-    #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/standup",
-    #     "name": "standup",
-    # },
+dnerf_list = [
     {
-        "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/trex",
+        "path": os.path.join(data_root, "lego"),
+        "name": "lego",
+    },
+    {
+        "path": os.path.join(data_root, "bouncingballs"),
+        "name": "bouncingballs",
+    },
+    {
+        "path": os.path.join(data_root, "hellwarrior"),
+        "name": "hellwarrior",
+    },
+    {
+        "path": os.path.join(data_root, "hook"),
+        "name": "hook",
+    },
+    {
+        "path": os.path.join(data_root, "jumpingjacks"),
+        "name": "jumpingjacks",
+    },
+    {
+        "path": os.path.join(data_root, "mutant"),
+        "name": "mutant",
+    },
+    {
+        "path": os.path.join(data_root, "standup"),
+        "name": "standup",
+    },
+    {
+        "path": os.path.join(data_root, "trex"),
         "name": "trex",
     },
 ]
 
-for task in hyper_list:
+for task in dnerf_list:
     print(f"Running {task['name']}")
     run_excu(task["name"], task["path"])
 
