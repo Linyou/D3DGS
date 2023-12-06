@@ -161,8 +161,10 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
                 batch_size = 1
                 loader = iter(viewpoint_stack_loader)
         else:
-            idx = randint(0, len(viewpoint_stack)-1)
-            viewpoint_cams = [viewpoint_stack[idx]]
+            viewpoint_cams = []
+            for bs in range(opt.batch_size):
+                idx = randint(0, len(viewpoint_stack)-1)
+                viewpoint_cams.append(viewpoint_stack[idx])
             
         renders = []
         viewspace_points = []
@@ -244,10 +246,11 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
         #     Ll1 = l2_loss(images, gt_images)
         #     loss = Ll1
         # else:
-        Ll1 = l1_loss(images, gt_images)
-        # Ll1 = l2_loss(images, gt_images) * 1e1
-        # loss = Ll1
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(images, gt_images))
+        Ll1 = l1_loss(images, gt_images) #+ l2_loss(images, gt_images) 
+        # Ll1 = F.smooth_l1_loss(images, gt_images)
+        # Ll1 = l2_loss(images, gt_images) 
+        loss = Ll1
+        # loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(images, gt_images))
         
         # get the extra losses from the gaussians
         for arr_loss_key in arr_lossess:
@@ -328,11 +331,14 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
                 opc_reset_interval = opt.opacity_reset_interval
                 densify_grad_threshold = opt.densify_grad_threshold
                 min_opacity = opt.min_opacity
+                prune_interval = opt.prune_interval
                 # if iteration > 5000:
                 #     densification_interval = 1000
                 if iteration > opt.densify_from_iter and iteration % densification_interval == 0:
+                    gaussians.densify(densify_grad_threshold, scene.cameras_extent)
+                if iteration > opt.densify_from_iter and iteration % prune_interval == 0:
                     size_threshold = 20 if iteration > 3000 else None
-                    gaussians.densify_and_prune(densify_grad_threshold, min_opacity, scene.cameras_extent, size_threshold)
+                    gaussians.prune(min_opacity, scene.cameras_extent, size_threshold)
                     # if iteration > 5000:
                     #     gaussians.update_moving_mask(iteration)
                 if iteration % opc_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
@@ -494,7 +500,7 @@ if __name__ == "__main__":
     parser.add_argument("--test_iterations", type=int, default=5000)
     parser.add_argument("--save_iterations", type=int, default=10000)
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--checkpoint_iterations", type=int, default=10000)
+    parser.add_argument("--checkpoint_iterations", type=int, default=30000)
     parser.add_argument("--start_checkpoint", type=str, default = None)
     parser.add_argument("--configs", type=str, default = "")
     parser.add_argument("--smc_file", type=str, default = None)

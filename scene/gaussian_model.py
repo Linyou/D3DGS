@@ -799,10 +799,10 @@ class GaussianModel:
                 lr = self.xyz_scheduler_args(iteration)
                 param_group['lr'] = lr
                 return lr
-            if param_group["name"] == "xyz_poly_params":
-                lr = self.xyz_scheduler_args(iteration)
-                param_group['lr'] = lr
-                return lr
+            # if param_group["name"] == "xyz_poly_params":
+            #     lr = self.xyz_scheduler_args(iteration)
+            #     param_group['lr'] = lr
+            #     return lr
                 # if param_group["name"] == "_time_scale_params":
                 #     lr = self.xyz_scheduler_args(iiter)
                 #     param_group['lr'] = lr
@@ -1230,6 +1230,28 @@ class GaussianModel:
 
         self.densify_and_clone(grads, max_grad, extent)
         self.densify_and_split(grads, max_grad, extent)
+
+        self.set_no_deform()
+        prune_mask = (self.get_opacity < min_opacity).squeeze()
+        if max_screen_size:
+            big_points_vs = self.max_radii2D > max_screen_size
+            big_points_ws = self.get_scaling.max(dim=1).values > 0.1 * extent
+            prune_mask = torch.logical_or(prune_mask, big_points_vs)
+            prune_mask = torch.logical_or(prune_mask, big_points_ws)
+        self.prune_points(prune_mask)
+
+        torch.cuda.empty_cache()
+        
+    def densify(self, max_grad, extent):
+        grads = self.xyz_gradient_accum / self.denom
+        grads[grads.isnan()] = 0.0
+
+        self.densify_and_clone(grads, max_grad, extent)
+        self.densify_and_split(grads, max_grad, extent)
+
+        torch.cuda.empty_cache()
+        
+    def prune(self, min_opacity, extent, max_screen_size):
 
         self.set_no_deform()
         prune_mask = (self.get_opacity < min_opacity).squeeze()

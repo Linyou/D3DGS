@@ -56,10 +56,10 @@ hyper_list = [
     #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/hook",
     #     "name": "hook",
     # },
-    {
-        "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/jumpingjacks",
-        "name": "jumpingjacks",
-    },
+    # {
+    #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/jumpingjacks",
+    #     "name": "jumpingjacks",
+    # },
     # {
     #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/mutant",
     #     "name": "mutant",
@@ -68,10 +68,10 @@ hyper_list = [
     #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/standup",
     #     "name": "standup",
     # },
-    # {
-    #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/trex",
-    #     "name": "trex",
-    # },
+    {
+        "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/trex",
+        "name": "trex",
+    },
 ]
 
 for task in hyper_list:

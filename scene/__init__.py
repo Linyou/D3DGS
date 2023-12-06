@@ -57,7 +57,7 @@ class Scene:
             self.is_colmap = True
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("Found transforms_train.json file, assuming Blender data set!")
-            scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)
+            scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval, factor=load_img_factor)
             normalize_time = False
             self.is_blender = True
         elif os.path.exists(os.path.join(args.source_path, "scene.json")):

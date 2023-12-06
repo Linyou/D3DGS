@@ -96,4 +96,4 @@ class FFTPloy_taichi(torch.nn.Module):
             factors.contiguous(), 
             timestamp,
             degree,
-        ) / self.max_degree
+        ) / self.max_degree / 3

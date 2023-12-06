@@ -246,7 +246,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, suppress=False, dynamic=
     )
     return scene_info, cam_extrinsics, cam_intrinsics
 
-def readCamerasFromTransforms(path, transformsfile, white_background, extension=".png", mapper = {}):
+def readCamerasFromTransforms(path, transformsfile, white_background, extension=".png", mapper = {}, factor=1.0):
     cam_infos = []
 
     with open(os.path.join(path, transformsfile)) as json_file:
@@ -273,7 +273,7 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             norm_data = im_data / 255.0
             arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
             image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
-            image = PILtoTorch(image,(800,800))
+            image = PILtoTorch(image,(int(800 * factor), int(800 * factor)))
             fovy = focal2fov(fov2focal(fovx, image.shape[1]), image.shape[2])
             FovY = fovy 
             FovX = fovx
@@ -284,12 +284,12 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             
     return cam_infos
 
-def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
+def readNerfSyntheticInfo(path, white_background, eval, extension=".png", factor=1.0):
     timestamp_mapper, max_time = read_timeline(path)
     print("Reading Training Transforms")
-    train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", white_background, extension, timestamp_mapper)
+    train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", white_background, extension, timestamp_mapper, factor)
     print("Reading Test Transforms")
-    test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", white_background, extension, timestamp_mapper)
+    test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", white_background, extension, timestamp_mapper, factor)
     video_cam_infos = generateCamerasFromTransforms(path, "transforms_train.json", extension, max_time)
     
     if not eval:

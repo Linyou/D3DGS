@@ -19,7 +19,6 @@ FlowParams = dict(
     poly_base_factor = 1,
     Hz_base_factor = 1/2,
     
-    
     #training
     get_smooth_loss=False,
     use_interpolation=False,

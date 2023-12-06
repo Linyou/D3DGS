@@ -115,4 +115,4 @@ class FFT_taichi(torch.nn.Module):
             timestamp, 
             # noise,
             degree,
-        )
+        ) / self.max_degree / 2
