@@ -18,9 +18,10 @@ class FFT_taichi(torch.nn.Module):
             for pid, dim_id, f_id in ti.ndrange(
                 factors.shape[0], 
                 factors.shape[2],
-                max_degree
+                # max_degree
             ):
-                # for f_id in ti.static(range(max_degree)):
+                out_sum = 0.
+                for f_id in ti.static(range(max_degree)):
                     if f_id < degree:
                         fac_vec = factors[pid, f_id, dim_id]
                         # noise_vec = noise[pid, dim_id, f_id]
@@ -28,7 +29,8 @@ class FFT_taichi(torch.nn.Module):
                         x = current_w #* fac_vec[2] + fac_vec[3]
                         sin = fac_vec[0] * ti.sin(x)
                         cos = fac_vec[1] * ti.cos(x)
-                        out[pid, dim_id] += sin + cos
+                        out_sum += sin + cos
+                out[pid, dim_id] = out_sum
         
         self.fft_kernel_fwd = fft_kernel_fwd
                 
@@ -115,4 +117,4 @@ class FFT_taichi(torch.nn.Module):
             timestamp, 
             # noise,
             degree,
-        ) / self.max_degree / 2
+        ) / self.max_degree

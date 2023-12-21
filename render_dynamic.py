@@ -37,6 +37,8 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     
     # views = views[::2]
     # import pdb;pdb.set_trace()
+    # if len(views) > 3419:
+    # views = views[2000:]
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         if idx == 0:time1 = time()
         gaussians.set_timestamp(view.timestamp)
@@ -64,8 +66,8 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
             torchvision.utils.save_image(image, os.path.join(render_path, '{0:05d}'.format(count) + ".png"))
             count +=1
     
-    imageio.mimwrite(os.path.join(model_path, name, "ours_{}".format(iteration), 'video_rgb.mp4'), render_images, fps=24, quality=8)
-def render_sets(dataset : ModelParams, opt, flow_args, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, skip_video: bool):
+    imageio.mimwrite(os.path.join(model_path, name, "ours_{}".format(iteration), 'video_rgb.mp4'), render_images, fps=60, quality=8)
+def render_sets(dataset : ModelParams, opt, flow_args, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, skip_video: bool, ckpt_name="chkpnt10000.pth"):
     with torch.no_grad():
         gaussians = GaussianModel(
             dataset.sh_degree,
@@ -77,12 +79,16 @@ def render_sets(dataset : ModelParams, opt, flow_args, iteration : int, pipeline
             feature_traj_feat_dim=flow_args.feature_traj_feat_dim,
             feature_trajectory_type=flow_args.feature_trajectory_type,
             traj_init=flow_args.traj_init,
+            poly_base_factor=flow_args.poly_base_factor,
+            Hz_base_factor=flow_args.Hz_base_factor,
+            normliaze=flow_args.normliaze,
+            factor_t=opt.factor_t,
         )
         scene = Scene(dataset, gaussians, shuffle=False, load_img_factor=pipeline.load_img_factor)
         
-        gaussians.training_setup(opt)
-        (model_params, first_iter) = torch.load(os.path.join(args.model_path, "chkpnt30000.pth"))
-        gaussians.restore(model_params, opt)
+        gaussians.training_setup(opt, flow_args)
+        (model_params, first_iter) = torch.load(os.path.join(args.model_path, f"{ckpt_name}"))
+        gaussians.restore(model_params, opt, flow_args)
 
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -108,6 +114,7 @@ if __name__ == "__main__":
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--skip_video", action="store_true")
     parser.add_argument("--configs", type=str)
+    parser.add_argument("--ckpt_name", type=str, default="chkpnt10000.pth")
     args = get_combined_args(parser)
     print("Rendering " , args.model_path)
     if args.configs:
@@ -118,4 +125,4 @@ if __name__ == "__main__":
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
-    render_sets(model.extract(args), op.extract(args), f.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, args.skip_video)
+    render_sets(model.extract(args), op.extract(args), f.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test, args.skip_video, args.ckpt_name)

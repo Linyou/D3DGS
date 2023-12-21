@@ -28,6 +28,7 @@ from scene.dnerf_loader import read_timeline, generateCamerasFromTransforms
 from utils.general_utils import PILtoTorch
 from tqdm import tqdm
 import torchvision.transforms as transforms
+from scene.neural_3D_dataset_NDC import get_spiral
 
 class CameraInfo(NamedTuple):
     uid: int
@@ -67,6 +68,7 @@ class SceneInfo(NamedTuple):
     nerf_normalization: dict
     ply_path: str
     maxtime: int
+    
 
 def getNerfppNorm(cam_info):
     def get_center_and_diag(cam_centers):
@@ -202,7 +204,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, suppress=False, dynamic=
     train_cam_infos = cam_infos[1:]
     test_cam_infos = cam_infos[0:1]
     
-    val_poses = get_spiral(poses, self.near_fars, N_views=N_views)
+    # val_poses = get_spiral(poses, self.near_fars, N_views=N_views)
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
 
@@ -300,10 +302,11 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png", factor
 
     ply_path = os.path.join(path, "points3d.ply")
     # Since this data set has no colmap data, we start with random points
-    num_pts = 10_000
+    num_pts = 2_000
     print(f"Generating random point cloud ({num_pts})...")
     
     # We create random points inside the bounds of the synthetic Blender scenes
+    # radius = 3.0
     xyz = np.random.random((num_pts, 3)) * 2.6 - 1.3
     shs = np.random.random((num_pts, 3)) / 255.0
     pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
@@ -316,7 +319,7 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png", factor
         video_cameras=video_cam_infos,
         nerf_normalization=nerf_normalization,
         ply_path=ply_path,
-        maxtime=int(max_time),
+        maxtime=max_time,
     )
     return scene_info
 
@@ -333,6 +336,7 @@ def readHyperDataInfos(datadir,use_bg_points,eval, gen_ply=False, factor=1.0):
     max_time = train_cam_infos.max_time
     video_cam_infos = copy.deepcopy(test_cam_infos)
     video_cam_infos.split="video"
+    # import pdb; pdb.set_trace()
 
     ply_path = os.path.join(datadir, "points.npy")
 
@@ -394,30 +398,42 @@ def format_infos_dna(dataset,split):
 
     return cameras
 
-def format_infos(dataset,split):
+def format_infos(dataset, split, image, dataset_size, iter_instrics=False):
     # loading
     cameras = []
-    image = dataset[0][0]
     if split == "train":
-        for idx in tqdm(range(len(dataset))):
+        for idx in tqdm(range(dataset_size)):
             image_path = None
             image_name = f"{idx}"
-            time = dataset.image_times[idx]
+            time = 0
             # matrix = np.linalg.inv(np.array(pose))
-            R,T = dataset.load_pose(idx)
-            FovX = focal2fov(dataset.focal[0], image.shape[1])
-            FovY = focal2fov(dataset.focal[0], image.shape[2])
-            cameras.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                                image_path=image_path, image_name=image_name, width=image.shape[2], height=image.shape[1],
-                                timestamp = time))
+            if iter_instrics:
+                R,T,FovX,FovY = dataset.load_pose(idx)
+            else:
+                R,T = dataset.load_pose(idx)
+                FovX = focal2fov(dataset.focal[0], image.shape[1])
+                FovY = focal2fov(dataset.focal[0], image.shape[2])
+            cameras.append(
+                CameraInfo(
+                    uid=idx, R=R, T=T, 
+                    FovY=FovY, FovX=FovX, 
+                    image=image,
+                    image_path=image_path, 
+                    image_name=image_name, 
+                    width=image.shape[2], 
+                    height=image.shape[1],
+                    timestamp = time
+                )
+            )
 
     return cameras
 
-def format_render_poses(poses,data_infos):
+def format_render_poses(poses, data_infos, max_time=300):
     cameras = []
     tensor_to_pil = transforms.ToPILImage()
     len_poses = len(poses)
-    times = [i/len_poses for i in range(len_poses)]
+    # make sure the poses are not normalized
+    times = [i % max_time for i in range(len_poses)]
     image = data_infos[0][0]
     for idx, p in tqdm(enumerate(poses)):
         # image = None
@@ -468,10 +484,16 @@ def readdynerfInfo(datadir,use_bg_points,eval):
         scene_bbox_max=[2.5, 2.0, 1.0],
         eval_index=0,
     )
-    train_cam_infos = format_infos(train_dataset, "train")
+    image = train_dataset[0][0]
+    train_cam_infos = format_infos(
+        train_dataset, 
+        "train", 
+        image, 
+        len(train_dataset)
+    )
     
     # test_cam_infos = format_infos(test_dataset,"test")
-    val_cam_infos = format_render_poses(test_dataset.val_poses,test_dataset)
+    val_cam_infos = format_render_poses(test_dataset.val_poses,test_dataset, max_time=300)
     nerf_normalization = getNerfppNorm(train_cam_infos)
     # create pcd
     # if not os.path.exists(ply_path):
@@ -525,27 +547,29 @@ def readdnaInfo(datadir, anno_smc, factor=1.0):
         "train",
         factor,
         only_0=True,
-    )     
+    )  
+    image = train_dataset[0].image
+    train_cam_infos = format_infos(
+        train_dataset, 
+        "train", 
+        image,
+        train_dataset.cam_number,
+        iter_instrics=True,
+    )
+    nerf_normalization = getNerfppNorm(train_cam_infos)
     # train_cam_infos = format_infos_dna(train_dataset, "train")
     # nerf_normalization = getNerfppNorm(train_cam_infos)
     # create pcd
     # if not os.path.exists(ply_path):
     # Since this data set has no colmap data, we start with random points
-    num_pts = 10000
-    radius = 3.0
+    num_pts = 10_000
     print(f"Generating random point cloud ({num_pts})...")
-    print("radius: ", radius)
-    nerf_normalization = {"radius": radius}
+    
     # We create random points inside the bounds of the synthetic Blender scenes
+    radius = 3
     xyz = np.random.random((num_pts, 3)) * 2 * radius - radius
     shs = np.random.random((num_pts, 3)) / 255.0
     pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
-    storePly(ply_path, xyz, SH2RGB(shs) * 255)
-    # try:
-    #     # xyz = np.load
-    #     pcd = fetchPly(ply_path)
-    # except:
-    #     pcd = None
         
     scene_info = SceneInfo(
         point_cloud=pcd,

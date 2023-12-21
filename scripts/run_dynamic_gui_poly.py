@@ -12,11 +12,12 @@ def safe_run(cmd):
 # scene
 # ['vrig_broom','vrig_peel-banana', 'vrig_3dprinter', 'vrig_chicken']
 
-name = "vrig_chicken"
-ckpt_file = "chkpnt30000.pth"
+name = "split-cookie"
+ckpt_file = "chkpnt10000.pth"
 # dataset_path = f'/home/loyot/workspace/SSD_1T/Datasets/NeRF/3d_vedio_datasets/{name}/images_split'
-dataset_path = '/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/vrig_chicken/chicken'
-output_name = f"{name}_poly_base_v11"
+dataset_path = '/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/misc_split-cookie/split-cookie'
+output_name = f"hypernerf/misc_split-cookie_fftpoly@20231212-024358"
+config = "arguments/hypernerf/default.py"
 command = [
     'python', 'gui.py',
     # '-s', f'{dataset_path}/0',
@@ -24,5 +25,6 @@ command = [
     '-s', f'{dataset_path}',
     '--model_path', f'output/{output_name}',
     '--start_checkpoint', f'/home/loyot/workspace/code/gaussian-splatting/output/{output_name}/{ckpt_file}',
+    '--configs', f'{config}',
 ]
-safe_run(command)
+safe_run(command) 

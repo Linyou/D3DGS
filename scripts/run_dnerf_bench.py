@@ -42,38 +42,38 @@ def run_excu(name_prefix, path):
     safe_run(command)
     
 dnerf_list = [
-    {
-        "path": os.path.join(data_root, "lego"),
-        "name": "lego",
-    },
-    {
-        "path": os.path.join(data_root, "bouncingballs"),
-        "name": "bouncingballs",
-    },
-    {
-        "path": os.path.join(data_root, "hellwarrior"),
-        "name": "hellwarrior",
-    },
-    {
-        "path": os.path.join(data_root, "hook"),
-        "name": "hook",
-    },
+    # {
+    #     "path": os.path.join(data_root, "lego"),
+    #     "name": "lego",
+    # },
+    # {
+    #     "path": os.path.join(data_root, "bouncingballs"),
+    #     "name": "bouncingballs",
+    # },
+    # {
+    #     "path": os.path.join(data_root, "hellwarrior"),
+    #     "name": "hellwarrior",
+    # },
+    # {
+    #     "path": os.path.join(data_root, "hook"),
+    #     "name": "hook",
+    # },
     {
         "path": os.path.join(data_root, "jumpingjacks"),
         "name": "jumpingjacks",
     },
-    {
-        "path": os.path.join(data_root, "mutant"),
-        "name": "mutant",
-    },
-    {
-        "path": os.path.join(data_root, "standup"),
-        "name": "standup",
-    },
-    {
-        "path": os.path.join(data_root, "trex"),
-        "name": "trex",
-    },
+    # {
+    #     "path": os.path.join(data_root, "mutant"),
+    #     "name": "mutant",
+    # },
+    # {
+    #     "path": os.path.join(data_root, "standup"),
+    #     "name": "standup",
+    # },
+    # {
+    #     "path": os.path.join(data_root, "trex"),
+    #     "name": "trex",
+    # },
 ]
 
 for task in dnerf_list:

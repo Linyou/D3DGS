@@ -1,7 +1,12 @@
 import subprocess
 from termcolor import colored
 import os
+from datetime import datetime
+import time
+from time import sleep
 
+timestamp = time.time()
+formatted_timestamp = datetime.fromtimestamp(timestamp).strftime('%Y%m%d-%H%M%S')
 
 selected_gpu = '0'
 my_env = os.environ.copy()
@@ -17,14 +22,15 @@ def safe_run(cmd):
 
 
 def run_excu(name_prefix, path, order=32):
-    name = f'{name_prefix}_fftpoly_test2'
+    tag = formatted_timestamp
+    name = f'hypernerf/{name_prefix}_fftpoly@{tag}'
     # name = f'{name_prefix}_fftpoly_60k'
     # name = f'{name_prefix}_fftpoly_order{order}'
     dataset_path = path
-    config = "arguments/hypernerf/default.py"
+    config = "arguments/hypernerf/vrig.py"
 
     # first frame
-    print(colored("Running: ", 'light_cyan'), f'frame: 0:')
+    # print(colored("Running: ", 'light_cyan'), f'frame: 0:')
     command = [
         'python', 'train.py',
         '-s', f'{dataset_path}',
@@ -32,9 +38,9 @@ def run_excu(name_prefix, path, order=32):
         # '--iterations', '30000',
         '--config', f'{config}',
         # '--test_iterations', '59999',
-        '--test_iterations', '29999',
+        '--test_iterations', '2000',
         '--eval',
-        '--xyz_traj_feat_dim', f'{order}',
+        # '--xyz_traj_feat_dim', f'{order}',
     ]
     safe_run(command)
     
@@ -43,18 +49,26 @@ hyper_list = [
     #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/interp_cut-lemon/cut-lemon1",
     #     "name": "interp_cut-lemon",
     # },
-    {
-        "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/interp_chickchicken/chickchicken",
-        "name": "interp_chickchicken",
-    },
+    # {
+    #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/interp_chickchicken/chickchicken",
+    #     "name": "interp_chickchicken",
+    # },
     # {
     #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/misc_split-cookie/split-cookie",
     #     "name": "misc_split-cookie",
     # },
     # {
-    #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/vrig_3dprinter/3dprinter",
-    #     "name": "vrig_3dprinter",
+    #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/misc_espresso/espresso",
+    #     "name": "misc_espresso",
     # },
+    # {
+    #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/misc_americano/americano",
+    #     "name": "misc_americano",
+    # },
+    {
+        "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/vrig_3dprinter/3dprinter",
+        "name": "vrig_3dprinter",
+    },
     # {
     #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/vrig_broom/broom",
     #     "name": "vrig_broom",
@@ -71,8 +85,10 @@ hyper_list = [
 
 
 for task in hyper_list:
-    print(f"Running {task['name']}")
+    name = task['name']
+    print(colored("Running: ", 'light_cyan'), f'{name}')
     # for od in [8 , 16, 32, 64]:
     run_excu(task["name"], task["path"])
+    sleep(5)
 
     

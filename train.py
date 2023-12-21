@@ -41,7 +41,9 @@ ti.init(arch=ti.cuda, offline_cache=False)
 
 lpips_net = LPIPS(net="vgg").to("cuda")
 lpips_norm_fn = lambda x: x[None, ...] * 2 - 1
+lpips_norm_b_fn = lambda x: x * 2 - 1
 lpips_fn = lambda x, y: lpips_net(lpips_norm_fn(x), lpips_norm_fn(y)).mean()
+lpips_b_fn = lambda x, y: lpips_net(lpips_norm_b_fn(x), lpips_norm_b_fn(y)).mean()
 
 def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, smc_file=None):
     
@@ -61,10 +63,13 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
         opc_trajectory_type=flow_args.opc_trajectory_type,
         feature_traj_feat_dim=flow_args.feature_traj_feat_dim,
         feature_trajectory_type=flow_args.feature_trajectory_type,
+        feature_dc_trajectory_type=flow_args.feature_dc_trajectory_type,
         traj_init=flow_args.traj_init,
         poly_base_factor=flow_args.poly_base_factor,
         Hz_base_factor=flow_args.Hz_base_factor,
         normliaze=flow_args.normliaze,
+        factor_t=opt.factor_t,
+        factor_t_value=opt.factor_t_value,
     )
     if pipe.real_dynamic:
         scene = DynamicScene(dataset, gaussians)
@@ -89,7 +94,7 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
         #     gaussians.restore_t0(model_root)
         # if opt.after_second_frame:
         #     gaussians.restore_diff(model_root)
-        gaussians.restore(model_params, opt)
+        gaussians.restore(model_params, opt, flow_args)
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -108,6 +113,8 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
     scale_loss = None
     if opt.knn_loss:
         gaussians.get_knn_index()
+        
+    # grad_scaler = torch.cuda.amp.GradScaler(2**10)
     for iteration in range(first_iter, opt.iterations + 1):        
         # if network_gui.conn == None:
         #     network_gui.try_connect()
@@ -151,8 +158,9 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
             else:
                 viewpoint_stack = scene.getTrainCameras()
             batch_size = opt.batch_size
-            viewpoint_stack_loader = DataLoader(viewpoint_stack, batch_size=batch_size,shuffle=False,num_workers=4,collate_fn=list)
-            loader = iter(viewpoint_stack_loader)
+            if opt.dataloader:
+                viewpoint_stack_loader = DataLoader(viewpoint_stack, batch_size=batch_size,shuffle=opt.loader_shuffle,num_workers=16,collate_fn=list)
+                loader = iter(viewpoint_stack_loader)
         if opt.dataloader:
             try:
                 viewpoint_cams = next(loader)
@@ -165,6 +173,7 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
             for bs in range(opt.batch_size):
                 idx = randint(0, len(viewpoint_stack)-1)
                 viewpoint_cams.append(viewpoint_stack[idx])
+                
             
         renders = []
         viewspace_points = []
@@ -214,8 +223,7 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
                     random_noise=flow_args.random_noise,
                     get_moving_loss=flow_args.get_moving_loss,
                     masked=flow_args.masked,
-                    # detach_base=True if iteration > opt.densify_until_iter else False,
-                    detach_base=False,
+                    detach_base=True if iteration > opt.detach_base_iter else False,
                 )
                 # testing_iterations = 1
             else:
@@ -229,16 +237,18 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
             if (iteration - 1) == debug_from:
                 pipe.debug = True
             render_pkg = render(viewpoint_cam, gaussians, pipe, background)
-            image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+            # image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
             
             renders.append(render_pkg["render"])
             viewspace_points.append(render_pkg["viewspace_points"])
-            visibility_filters.append(render_pkg["visibility_filter"])
-            radiis.append(render_pkg["radii"])
+            visibility_filters.append(render_pkg["visibility_filter"].unsqueeze(0))
+            radiis.append(render_pkg["radii"].unsqueeze(0))
             gt_images.append(viewpoint_cam.original_image.cuda())
 
         # Loss
         # gt_image = viewpoint_cam.original_image.cuda()
+        radii = torch.cat(radiis,0).max(dim=0).values
+        visibility_filter = torch.cat(visibility_filters).any(dim=0)
         images = torch.stack(renders)
         gt_images = torch.stack(gt_images)
         
@@ -249,7 +259,10 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
         Ll1 = l1_loss(images, gt_images) #+ l2_loss(images, gt_images) 
         # Ll1 = F.smooth_l1_loss(images, gt_images)
         # Ll1 = l2_loss(images, gt_images) 
+        # ssim_loss = ssim(images, gt_images)
+        # lpips_loss = lpips_b_fn(images, gt_images)
         loss = Ll1
+        # loss = Ll1 + 0.01 * (1.0 - ssim_loss) + 0.01 * lpips_loss
         # loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(images, gt_images))
         
         # get the extra losses from the gaussians
@@ -275,6 +288,11 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
             continue
             
         loss.backward()
+        # grad_scaler.scale(loss).backward()
+        viewspace_point_tensor_grad = torch.zeros_like(viewspace_points[0])
+        for idx in range(0, len(viewspace_points)):
+            viewspace_point_tensor_grad = viewspace_point_tensor_grad + viewspace_points[idx].grad
+        # import pdb; pdb.set_trace()
 
         iter_end.record()
 
@@ -313,20 +331,21 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
             # Densification
             if (iteration < opt.densify_until_iter) and not pipe.train_rest_frame:
                 
-                bs = len(viewspace_points)
-                for i in range(bs):
-                    radii_i = radiis[i]
-                    visibility_filter_i = visibility_filters[i]
-                    viewspace_point_tensor_i = viewspace_points[i]
-                    gaussians.max_radii2D[visibility_filter_i] = torch.max(gaussians.max_radii2D[visibility_filter_i], radii_i[visibility_filter_i])
+                # bs = len(viewspace_points)
+                # for i in range(bs):
+                #     radii_i = radiis[i]
+                #     visibility_filter_i = visibility_filters[i]
+                #     viewspace_point_tensor_i = viewspace_points[i]
+                #     gaussians.max_radii2D[visibility_filter_i] = torch.max(gaussians.max_radii2D[visibility_filter_i], radii_i[visibility_filter_i])
                     
-                    gaussians.add_densification_stats(
-                        viewspace_point_tensor_i, 
-                        visibility_filter_i
-                    )
+                #     gaussians.add_densification_stats(
+                #         viewspace_point_tensor_i, 
+                #         visibility_filter_i,
+                #         # update_denom=False if i > 0 else True,
+                #     )
                 # Keep track of max radii in image-space for pruning
-                # gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
-                # gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+                gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
+                gaussians.add_densification_stats(viewspace_point_tensor_grad, visibility_filter)
                 densification_interval = opt.densification_interval
                 opc_reset_interval = opt.opacity_reset_interval
                 densify_grad_threshold = opt.densify_grad_threshold
@@ -337,7 +356,7 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
                 if iteration > opt.densify_from_iter and iteration % densification_interval == 0:
                     gaussians.densify(densify_grad_threshold, scene.cameras_extent)
                 if iteration > opt.densify_from_iter and iteration % prune_interval == 0:
-                    size_threshold = 20 if iteration > 3000 else None
+                    size_threshold = 20 if iteration > opt.opacity_reset_interval else None
                     gaussians.prune(min_opacity, scene.cameras_extent, size_threshold)
                     # if iteration > 5000:
                     #     gaussians.update_moving_mask(iteration)
@@ -352,6 +371,9 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
 
+                # gaussians.optimizer_poly.step()
+                # gaussians.optimizer_poly.zero_grad(set_to_none = True)
+
             if (iteration % checkpoint_iterations) == 0:
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
@@ -360,6 +382,9 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
                 #     gaussians.save_t0(scene.model_path.replace(frame_id, ''))
                 # else:
                 #     gaussians.save_diff(scene.model_path.replace(frame_id, ''))
+        # torch.cuda.empty_cache()
+    print("\n[ITER {}] Saving Checkpoint".format(iteration))
+    torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
 
 def prepare_output_and_logger(args):    
     if not args.model_path:

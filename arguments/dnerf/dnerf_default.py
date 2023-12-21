@@ -3,7 +3,7 @@ ModelParams = dict(
 )
 
 PipelineParams = dict(
-    load_img_factor=0.5,
+    load_img_factor=1.0,
 )
 
 FlowParams = dict(
@@ -13,13 +13,14 @@ FlowParams = dict(
     rot_trajectory_type = 'fft_poly',
     # feature_traj_feat_dim = 2,
     feature_traj_feat_dim = 6,
-    feature_trajectory_type = 'fft_poly',
+    feature_dc_trajectory_type = 'fft_poly',
     traj_init = 'zero',
     poly_base_factor = 1,
     Hz_base_factor = 1,
     
     # regularization
     # random_noise = True,
+    normliaze=False,
 )
 
 

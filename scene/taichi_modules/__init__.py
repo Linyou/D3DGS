@@ -20,6 +20,7 @@ def get_fit_model(type_name, feat_dim, poly_factor=1, Hz_factor=1):
             poly_base_factor=poly_factor,
         )
     else:
-        raise ValueError(f"Unknown module name: {type_name}")
+        trajectory_func = None
+        print("Trajectory type not found")
     
     return trajectory_func

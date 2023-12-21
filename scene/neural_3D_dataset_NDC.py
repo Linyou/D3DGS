@@ -186,6 +186,8 @@ def get_spiral(c2ws_all, near_fars, rads_scale=1.0, N_views=120):
     """
     Generate a set of poses using NeRF's spiral camera trajectory as validation poses.
     """
+    
+    c2ws_all[..., 3] = c2ws_all[..., 3] / 0.75 * 0.3
     # center pose
     c2w = average_poses(c2ws_all)
 
@@ -283,7 +285,7 @@ class Neural3D_NDC_Dataset(Dataset):
         poses[..., 3] /= scale_factor
 
         # Sample N_views poses for validation - NeRF-like camera trajectory.
-        N_views = 120
+        N_views = 240
         self.val_poses = get_spiral(poses, self.near_fars, N_views=N_views)
         # self.val_poses = self.directions
         W, H = self.img_wh

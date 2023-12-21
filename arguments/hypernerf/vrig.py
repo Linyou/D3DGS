@@ -52,5 +52,5 @@ OptimizationParams = dict(
     no_deform_from_iter=0,
     # knn_selec_thresh=1.0,
     factor_t=True,
-    factor_t_value=0.5,
+    factor_t_value=0.9,
 )

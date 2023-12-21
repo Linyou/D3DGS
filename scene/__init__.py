@@ -43,7 +43,7 @@ class Scene:
         self.test_cameras = {}
         
         radius_extent = 1.0
-        normalize_time = True
+        # normalize_time = True
         self.is_dynerf = False
         self.is_hyper = False
         self.is_blender = False
@@ -51,23 +51,26 @@ class Scene:
         self.is_dna = True if smc_file is not None else False
 
         if self.is_dna:
+            print("Setting DNA data set!")
             scene_info = sceneLoadTypeCallbacks["DNA"](args.source_path, smc_file, factor=load_img_factor)
-        elif os.path.exists(os.path.join(args.source_path, "sparse")):
-            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval)
-            self.is_colmap = True
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("Found transforms_train.json file, assuming Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval, factor=load_img_factor)
-            normalize_time = False
+            # normalize_time = False
             self.is_blender = True
         elif os.path.exists(os.path.join(args.source_path, "scene.json")):
+            print("Setting Hyper data set!")
             scene_info = sceneLoadTypeCallbacks["Hyper"](args.source_path, args.white_background, args.eval, gen_ply=True, factor=load_img_factor)
             # normalize_time = False
             self.is_hyper = True
         elif os.path.exists(os.path.join(args.source_path, "poses_bounds.npy")):
+            print("Found poses_bounds.npy file, assuming DyNeRF data set!")
             radius_extent = 5.0
             scene_info = sceneLoadTypeCallbacks["dynerf"](args.source_path, args.white_background, args.eval)
             self.is_dynerf = True
+        elif os.path.exists(os.path.join(args.source_path, "sparse")):
+            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval)
+            self.is_colmap = True
         else:
             print("error path: ", args.source_path)
             assert False, "Could not recognize scene type!"
@@ -100,7 +103,7 @@ class Scene:
                 self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args)
                 print("Loading Test Cameras")
                 self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
-                self.gaussians.factor_t = True
+                # self.gaussians.factor_t = True
         elif self.is_dynerf or self.is_dna:
             self.train_cameras = FourDGSdataset(scene_info.train_cameras, args)
             self.train_cameras_0 = FourDGSdataset(scene_info.train_cameras_0, args)
@@ -108,14 +111,14 @@ class Scene:
             
         self.video_camera = None
         if scene_info.video_cameras is not None:
-            self.video_camera = cameraList_from_camInfos(scene_info.video_cameras,-1,args)
+            self.video_camera = cameraList_from_camInfos(scene_info.video_cameras, -1,args,)
         
         self.gaussians.max_frames = scene_info.maxtime
-        self.gaussians.normalize_timestamp = normalize_time
-        print(f"Max frames: {scene_info.maxtime}, normalize time: {normalize_time}")
+        # self.gaussians.normalize_timestamp = normalize_time
+        print(f"MaxTime: {scene_info.maxtime}")
         
-        if self.is_hyper or self.is_dna or self.is_blender:
-            self.gaussians.factor_t = True
+        # if self.is_hyper or self.is_dna or self.is_blender:
+        #     self.gaussians.factor_t = True
 
         if self.loaded_iter:
             self.gaussians.load_ply(os.path.join(
@@ -147,7 +150,7 @@ class Scene:
             return self.test_cameras[scale]
     
     def getVideoCameras(self, scale=1.0):
-        if self.is_dynerf or self.is_dna:
+        if self.is_dynerf or self.is_dna or self.is_hyper or self.is_blender:
             return self.video_camera
         else:
             return self.video_camera[scale]

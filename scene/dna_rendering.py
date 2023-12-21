@@ -52,6 +52,7 @@ class DNARendering(Dataset):
         self.split = split
         self.downsample = downsample
         self.anno_smc = SMCReader(anno_smc)
+        self.transform = T.ToTensor()
         
 
         self.load_meta(only_0)
@@ -69,6 +70,8 @@ class DNARendering(Dataset):
             num_frames = 1
         else:
             num_frames = len(self.anno_smc.smc['Mask']['0']['mask'])
+            num_frames = int(num_frames/2)
+            
         num_cams = 48
         mask = self.anno_smc.get_mask(0, 0)
         # self.img_hw = mask.shape
@@ -79,6 +82,9 @@ class DNARendering(Dataset):
         
         cam_params = []
         self.timestamps = []
+        all_images = []
+        all_images_time = []
+        all_cameras = []
         for vid in range(num_cams):
             cam_param = self.anno_smc.get_Calibration(vid)
             cam_params.append(cam_param)
@@ -101,6 +107,12 @@ class DNARendering(Dataset):
                 img_cam_paths.append(
                     os.path.join(self.root_dir, img_name)
                 )
+                all_images.append(os.path.join(self.root_dir, img_name))
+                all_images_time.append(f_id)
+                all_cameras.append({
+                    "id": vid,
+                    "cam_param": cam_param,
+                })
             img_paths.append(img_cam_paths)
             
         # self.poses = np.array(poses)
@@ -109,6 +121,9 @@ class DNARendering(Dataset):
         # self.instrinsics = np.array(instrinsics)
         self.cam_params = cam_params
         self.img_paths = img_paths
+        self.all_images = all_images
+        self.all_images_time = all_images_time
+        self.all_cameras = all_cameras
 
         
         self.cam_number = num_cams
@@ -116,21 +131,23 @@ class DNARendering(Dataset):
 
     def __len__(self):
         if self.split == "train":
-            return self.cam_number*self.time_number
+            return len(self.all_images)
         elif self.split == "test":
             return self.cam_number
     
-    def __getitem__(self,index):
+    def __getitem__(self, index):
         
         if self.split == "train":
-            cam_id = random.randint(0,self.cam_number-1)
-            time_id = random.randint(0,self.time_number-1)
+            cam_id = self.all_cameras[index]['id']
+            time_id = self.all_images_time[index]
+            cam_param = self.all_cameras[index]['cam_param']
+            image_path = self.all_images[index]
         else:
             cam_id = index 
-            time_id = int(index * 3)
+            time_id = int(index * 3 % self.time_number)
+            cam_param = self.cam_params[cam_id]
+            image_path = self.img_paths[cam_id][time_id]
             
-        cam_param = self.cam_params[cam_id]
-        image_path = self.img_paths[cam_id][time_id]
         img = Image.open(image_path)
         
         # Camera_id = str(cam_id)
@@ -149,7 +166,7 @@ class DNARendering(Dataset):
         # corrected_img = Image.fromarray(corrected_img[0])
         K = K * self.downsample
         img = img.resize(self.img_wh, Image.LANCZOS)
-        img = PILtoTorch(img, None)
+        img = self.transform(img)
         img = img.to(torch.float32)
         # R = self.R[cam_id]
         # T = self.T[cam_id]
@@ -174,7 +191,19 @@ class DNARendering(Dataset):
             cx=cx,
             cy=cy,
         )
-    
         
         return caminfo
+    
+    def load_pose(self, index):
+        cam_param = self.cam_params[index]
+        K = cam_param['K']
+        c2w = cam_param['RT']
+        # get the world-to-camera transform and set R, T
+        w2c = np.linalg.inv(c2w)
+        R = np.transpose(w2c[:3,:3])  # R is stored transposed due to 'glm' in CUDA code
+        T = w2c[:3, 3]
+        K = K * self.downsample
+        FovX = focal2fov(K[0, 0], self.img_wh[0])
+        FovY = focal2fov(K[1, 1], self.img_wh[1])
+        return R, T, FovX, FovY
     

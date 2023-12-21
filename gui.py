@@ -27,7 +27,7 @@ import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
-from arguments import ModelParams, PipelineParams, OptimizationParams
+from arguments import ModelParams, PipelineParams, OptimizationParams, FlowParams
 
 import datetime
 
@@ -53,7 +53,7 @@ def write_buffer(
             final_pixel[i, j][p] = x[p, j_rev, i]
 
 class GUI:
-    def __init__(self, dataset, opt, pipe, checkpoint, dynamic=False):
+    def __init__(self, dataset : ModelParams, opt, flow_args, pipe : PipelineParams, checkpoint, dynamic=False):
 
         device = "cuda:0"
         self.dynamic = dynamic
@@ -62,16 +62,19 @@ class GUI:
         self.current_gaussians = GaussianModel(
             dataset.sh_degree,
             max_steps=opt.iterations+1,
-            xyz_traj_feat_dim=3,
-            xyz_trajectory_type='poly',
-            rot_traj_feat_dim=4,
-            rot_trajectory_type='fft',
-            feature_traj_feat_dim=2,
-            feature_trajectory_type='fft',
-            traj_init='zero',
-            max_frames=100,
+            xyz_traj_feat_dim=flow_args.xyz_traj_feat_dim,
+            xyz_trajectory_type=flow_args.xyz_trajectory_type,
+            rot_traj_feat_dim=flow_args.rot_traj_feat_dim,
+            rot_trajectory_type=flow_args.rot_trajectory_type,
+            feature_traj_feat_dim=flow_args.feature_traj_feat_dim,
+            feature_trajectory_type=flow_args.feature_trajectory_type,
+            traj_init=flow_args.traj_init,
+            poly_base_factor=flow_args.poly_base_factor,
+            Hz_base_factor=flow_args.Hz_base_factor,
+            normliaze=flow_args.normliaze,
+            factor_t=opt.factor_t,
         )
-        if opt.real_dynamic:
+        if pipe.real_dynamic:
             self.scene = DynamicScene(
                 dataset, 
                 self.current_gaussians, 
@@ -81,12 +84,13 @@ class GUI:
             self.scene = Scene(
                 dataset, 
                 self.current_gaussians, 
-                shuffle=opt.dataset_shuffle
+                shuffle=False,
+                load_img_factor=pipe.load_img_factor
             )
         self.pipe = pipe
-        self.current_gaussians.training_setup(opt)
+        self.current_gaussians.training_setup(opt, flow_args)
         (model_params, first_iter) = torch.load(checkpoint)
-        self.current_gaussians.restore(model_params, opt)
+        self.current_gaussians.restore(model_params, opt, flow_args)
         # path_str = dataset.model_path
         # gaussians_paths_root = path_str.replace("/0", "")
         # spath = f"{gaussians_paths_root}/1/point_cloud/iteration_2000/point_cloud.ply"
@@ -255,6 +259,7 @@ if __name__ == "__main__":
     lp = ModelParams(parser)
     op = OptimizationParams(parser)
     pp = PipelineParams(parser)
+    ff = FlowParams(parser)
     parser.add_argument('--ip', type=str, default="127.0.0.1")
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--debug_from', type=int, default=-1)
@@ -263,11 +268,18 @@ if __name__ == "__main__":
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[2_000, 10_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[2_000, 10_000, 30_000])
+    parser.add_argument("--configs", type=str, default = "")
     parser.add_argument("--start_checkpoint", type=str, default = None)
     parser.add_argument("--dynamic", action='store_true', default=False)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
-    
+
+    if args.configs:
+        import mmcv
+        from utils.params_utils import merge_hparams
+        config = mmcv.Config.fromfile(args.configs)
+        args = merge_hparams(args, config)
+        
     print("Optimizing " + args.model_path)
 
     # Initialize system state (RNG)
@@ -280,7 +292,8 @@ if __name__ == "__main__":
     dataset = lp.extract(args)
     opt = op.extract(args)
     pipe = pp.extract(args)
-    gui = GUI(dataset, opt, pipe, args.start_checkpoint, args.dynamic)
+    flowm = ff.extract(args)
+    gui = GUI(dataset, opt, flowm, pipe, args.start_checkpoint, args.dynamic)
     gui.render_gui()
     # args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from
     

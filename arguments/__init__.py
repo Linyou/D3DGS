@@ -102,6 +102,10 @@ class OptimizationParams(ParamGroup):
         self.scale_loss = False
         self.dataloader=False
         self.no_deform_from_iter=0
+        self.factor_t = False
+        self.factor_t_value = 0.5
+        self.loader_shuffle = False
+        self.detach_base_iter = 5000
         super().__init__(parser, "Optimization Parameters")
         
 class FlowParams(ParamGroup):
@@ -111,15 +115,16 @@ class FlowParams(ParamGroup):
         self.rot_traj_feat_dim = 20
         self.rot_trajectory_type = 'fft'
         self.scale_traj_feat_dim = 20
-        self.scale_trajectory_type = 'fft'
+        self.scale_trajectory_type = 'none'
         self.opc_traj_feat_dim = 20
-        self.opc_trajectory_type = 'fft'
+        self.opc_trajectory_type = 'none'
         self.feature_traj_feat_dim = 2
-        self.feature_trajectory_type = 'fft'
+        self.feature_trajectory_type = 'none'
+        self.feature_dc_trajectory_type = 'fft'
         self.traj_init = 'zero'
         self.poly_base_factor = 1.0
         self.Hz_base_factor = 1.0
-        self.normliaze = False
+        self.normliaze = True
         self.get_smooth_loss=False
         self.use_interpolation=False
         self.random_noise=False

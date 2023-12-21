@@ -29,6 +29,7 @@ class Camera(nn.Module):
         data_device = "cuda",
         timestamp = 0.0,
         extra_cam_info = None,
+        video_cam = False,
     ):
         super(Camera, self).__init__()
 
@@ -56,12 +57,18 @@ class Camera(nn.Module):
             self.original_image *= gt_alpha_mask
         else:
             self.original_image *= torch.ones((1, self.image_height, self.image_width))
+            
+        # delete image for video camera to save memory
+        if video_cam:
+            del self.original_image
+            del gt_alpha_mask
 
         self.zfar = 100.0
         self.znear = 0.01
 
         self.trans = trans
         self.scale = scale
+        self.extra_cam_info = extra_cam_info
 
         self.world_view_transform = torch.tensor(getWorld2View2(R, T, trans, scale)).transpose(0, 1)
         if extra_cam_info is not None:
@@ -80,13 +87,25 @@ class Camera(nn.Module):
         self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
         self.camera_center = self.world_view_transform.inverse()[3, :3]
         
-    # def new_cam(self, R, T, trans=np.array([0.0, 0.0, 0.0]), scale=1.0):
-    #     self.R = R
-    #     self.T = T
-    #     self.world_view_transform = torch.tensor(getWorld2View2(R, T, trans, scale)).transpose(0, 1).cuda()
-    #     self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy).transpose(0,1).cuda()
-    #     self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
-    #     self.camera_center = self.world_view_transform.inverse()[3, :3]
+    def new_cam(self, R, T, trans=np.array([0.0, 0.0, 0.0]), scale=1.0):
+        self.R = R
+        self.T = T
+        self.world_view_transform = torch.tensor(getWorld2View2(R, T, trans, scale)).transpose(0, 1).cuda()
+        if self.extra_cam_info is not None:
+            self.projection_matrix = getProjectionMatrixCenterShift(
+                znear=self.znear, 
+                zfar=self.zfar, 
+                cx=self.extra_cam_info.cx,
+                cy=self.extra_cam_info.cy,
+                fl_x=self.extra_cam_info.focal_length_x,
+                fl_y=self.extra_cam_info.focal_length_y,
+                w=self.image_width,
+                h=self.image_height,
+            ).transpose(0,1).cuda()
+        else:
+            self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy).transpose(0,1).cuda()
+        self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
+        self.camera_center = self.world_view_transform.inverse()[3, :3]
 
 class MiniCam:
     def __init__(self, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform):
