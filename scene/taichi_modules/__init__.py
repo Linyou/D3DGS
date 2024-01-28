@@ -24,3 +24,4 @@ def get_fit_model(type_name, feat_dim, poly_factor=1, Hz_factor=1):
         print("Trajectory type not found")
     
     return trajectory_func
+

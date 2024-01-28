@@ -11,7 +11,7 @@
 
 import torch
 import math
-from .diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 
@@ -45,7 +45,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         sh_degree=pc.active_sh_degree,
         campos=viewpoint_camera.camera_center.cuda(),
         prefiltered=False,
-        computer_xyz=render_xyz,
+        # computer_xyz=render_xyz,
         debug=pipe.debug
     )
 
@@ -67,6 +67,13 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         scales = pc.get_scaling
         rotations = pc.get_rotation
         # rotations2 = pc.get_rotation2
+        
+    # trbfscale = pc._time_scale_params
+    # trbfdistanceoffset = pc.timestamp_final
+    # trbfdistance =  trbfdistanceoffset / torch.exp(trbfscale) 
+    # trbfoutput = torch.exp(-1*trbfdistance.pow(2))
+    
+    # opacity = opacity * trbfoutput 
 
     # If precomputed colors are provided, use them. Otherwise, if it is desired to precompute colors
     # from SHs in Python, do it. If not, then SH -> RGB conversion will be done by rasterizer.
@@ -85,7 +92,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
-    num_rendered, rendered_image, opacity, depth, render_xyz, radii = rasterizer(
+    rendered_image, radii = rasterizer(
         means3D = means3D,
         means2D = means2D,
         shs = shs,
@@ -100,10 +107,15 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     return {"render": rendered_image,
-            "num_rendered": num_rendered,
+            # "num_rendered": num_rendered,
             "opacity": opacity,
-            "depth": depth,
+            # "depth": depth,
             "render_xyz": render_xyz,
             "viewspace_points": screenspace_points,
             "visibility_filter" : radii > 0,
-            "radii": radii}
+            "radii": radii,
+            "xyz": means3D,
+            "color": shs,
+            "rot": rotations,
+            "scales": scales,
+            "xy": means2D,}

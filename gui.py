@@ -66,8 +66,13 @@ class GUI:
             xyz_trajectory_type=flow_args.xyz_trajectory_type,
             rot_traj_feat_dim=flow_args.rot_traj_feat_dim,
             rot_trajectory_type=flow_args.rot_trajectory_type,
+            scale_traj_feat_dim=flow_args.scale_traj_feat_dim,
+            scale_trajectory_type=flow_args.scale_trajectory_type,
+            opc_traj_feat_dim=flow_args.opc_traj_feat_dim,
+            opc_trajectory_type=flow_args.opc_trajectory_type,
             feature_traj_feat_dim=flow_args.feature_traj_feat_dim,
             feature_trajectory_type=flow_args.feature_trajectory_type,
+            feature_dc_trajectory_type=flow_args.feature_dc_trajectory_type,
             traj_init=flow_args.traj_init,
             poly_base_factor=flow_args.poly_base_factor,
             Hz_base_factor=flow_args.Hz_base_factor,
@@ -169,6 +174,10 @@ class GUI:
         current_frame = 14
         last_frame = 14
         time_max = self.current_gaussians.max_frames
+        if type(time_max) == float:
+            time_max = 1000
+            self.current_gaussians.normalize_timestamp = True
+            self.current_gaussians.max_frames = time_max
         duration_interval = 50
         start = datetime.datetime.now()
         
@@ -205,11 +214,25 @@ class GUI:
                         start = datetime.datetime.now()
                 else:
                     first_play = True
-                    
                 current_frame = gui.slider_int("time", current_frame, minimum=0, maximum=time_max)
                 if current_frame != last_frame:
                     update_frame = True
                     last_frame = current_frame
+                    
+                pos_x = gui.slider_float("pos_x", self.camera.curr_position[0], minimum=-5, maximum=5)
+                pos_y = gui.slider_float("pos_y", self.camera.curr_position[1], minimum=-5, maximum=5)
+                pos_z = gui.slider_float("pos_z", self.camera.curr_position[2], minimum=-5, maximum=5)
+                self.camera.position(pos_x, pos_y, pos_z)
+                
+                look_x = gui.slider_float("look_x", self.camera.curr_lookat[0], minimum=-5, maximum=5)
+                look_y = gui.slider_float("look_y", self.camera.curr_lookat[1], minimum=-5, maximum=5)
+                look_z = gui.slider_float("look_z", self.camera.curr_lookat[2], minimum=-5, maximum=5)
+                self.camera.lookat(look_x, look_y, look_z)
+                
+                up_x = gui.slider_int("up_x", self.camera.curr_up[0], minimum=-1, maximum=1)
+                up_y = gui.slider_int("up_y", self.camera.curr_up[1], minimum=-1, maximum=1)
+                up_z = gui.slider_int("up_z", self.camera.curr_up[2], minimum=-1, maximum=1)
+                self.camera.up(up_x, up_y, up_z)     
                         
                 # cam_pose = self.cam.pose
                 w.text(f'render size: {self.viewpoint_cam.image_width} x {self.viewpoint_cam.image_height}')
@@ -232,14 +255,18 @@ class GUI:
                     f'-{self.camera.curr_up}'
                 )
             Rt = self.camera.get_view_matrix().T
-            Rt[:3, 3] *= np.array([1, 1, -1])
+            # import pdb; pdb.set_trace()
+            R = Rt[:3, :3]
+            T = Rt[:3, 3]
+            T *= np.array([1, -1, -1])
+            # Rt[:3, 3] *= np.array([1, 1, -1])
             # t = np.array([
             #     -self.camera.curr_position[0], 
             #     self.camera.curr_position[1],
-            #     self.camera.curr_position[2],
+            #     self.camera.curr_position[2],a
             # ])
             # self.viewpoint_cam.new_cam(self.cam.rot, self.cam.center)
-            self.viewpoint_cam.new_cam(Rt[:3, :3], Rt[:3, 3])
+            self.viewpoint_cam.new_cam(R[:, [0 ,2, 1]], T)
             # print("frame id: ", current_frame)
             if update_frame:
                 if self.dynamic:

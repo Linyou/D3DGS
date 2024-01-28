@@ -505,12 +505,6 @@ def readdynerfInfo(datadir,use_bg_points,eval):
     xyz = np.random.random((num_pts, 3)) * 2 * radius - radius
     shs = np.random.random((num_pts, 3)) / 255.0
     pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
-    storePly(ply_path, xyz, SH2RGB(shs) * 255)
-    try:
-        # xyz = np.load
-        pcd = fetchPly(ply_path)
-    except:
-        pcd = None
         
     scene_info = SceneInfo(
         point_cloud=pcd,

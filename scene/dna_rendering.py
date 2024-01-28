@@ -38,6 +38,25 @@ class CameraInfo(NamedTuple):
     focal_length_y: float
     cx: float
     cy: float
+    
+
+class CameraInfoMask(NamedTuple):
+    uid: int
+    R: np.array
+    T: np.array
+    FovY: np.array
+    FovX: np.array
+    image: np.array
+    image_path: str
+    image_name: str
+    width: int
+    height: int
+    timestamp : float
+    focal_length_x: float
+    focal_length_y: float
+    cx: float
+    cy: float
+    mask: any
 
 class DNARendering(Dataset):
     def __init__(
@@ -47,12 +66,18 @@ class DNARendering(Dataset):
         split="train",
         downsample=1.0,
         only_0=False,
+        bg_color="white",
     ):
         self.root_dir = datadir
         self.split = split
         self.downsample = downsample
         self.anno_smc = SMCReader(anno_smc)
         self.transform = T.ToTensor()
+        
+        if bg_color == "black":
+            self.bg_color = np.array([0, 0, 0]).astype(np.uint8)
+        elif bg_color == "white":
+            self.bg_color = np.array([1, 1, 1]).astype(np.uint8) * 255
         
 
         self.load_meta(only_0)
@@ -65,12 +90,13 @@ class DNARendering(Dataset):
         Rs = []
         Ts = []
         img_paths = []
+        img_mask_paths = []
         instrinsics = []
         if only_0:
             num_frames = 1
         else:
             num_frames = len(self.anno_smc.smc['Mask']['0']['mask'])
-            num_frames = int(num_frames/2)
+            # num_frames = int(num_frames/2)
             
         num_cams = 48
         mask = self.anno_smc.get_mask(0, 0)
@@ -85,7 +111,9 @@ class DNARendering(Dataset):
         all_images = []
         all_images_time = []
         all_cameras = []
-        for vid in range(num_cams):
+        all_images_mask = []
+        print("Loading all camera")
+        for vid in tqdm(range(num_cams)):
             cam_param = self.anno_smc.get_Calibration(vid)
             cam_params.append(cam_param)
             # pose = self.anno_smc.get_Calibration(vid)['RT']
@@ -100,6 +128,7 @@ class DNARendering(Dataset):
             # instrinsics.append(instrinsic_scaled)
             cam_name = f'cam_{vid:02d}'
             img_cam_paths = []
+            img_cam_mask_paths = []
             for f_id in range(0, num_frames):
                 if vid == 0:
                     self.timestamps.append(f_id)
@@ -108,12 +137,19 @@ class DNARendering(Dataset):
                     os.path.join(self.root_dir, img_name)
                 )
                 all_images.append(os.path.join(self.root_dir, img_name))
+                
+                mask_name = f'{f_id}/images/{cam_name}_mask.png'
+                img_cam_mask_paths.append(
+                    os.path.join(self.root_dir, mask_name)
+                )
+                all_images_mask.append(os.path.join(self.root_dir, mask_name))
                 all_images_time.append(f_id)
                 all_cameras.append({
                     "id": vid,
                     "cam_param": cam_param,
                 })
             img_paths.append(img_cam_paths)
+            img_mask_paths.append(img_cam_mask_paths)
             
         # self.poses = np.array(poses)
         # self.R = np.array(Rs)
@@ -121,7 +157,9 @@ class DNARendering(Dataset):
         # self.instrinsics = np.array(instrinsics)
         self.cam_params = cam_params
         self.img_paths = img_paths
+        self.img_mask_paths = img_mask_paths
         self.all_images = all_images
+        self.all_images_mask = all_images_mask
         self.all_images_time = all_images_time
         self.all_cameras = all_cameras
 
@@ -142,14 +180,14 @@ class DNARendering(Dataset):
             time_id = self.all_images_time[index]
             cam_param = self.all_cameras[index]['cam_param']
             image_path = self.all_images[index]
+            mask_path = self.all_images_mask[index]
         else:
             cam_id = index 
             time_id = int(index * 3 % self.time_number)
             cam_param = self.cam_params[cam_id]
             image_path = self.img_paths[cam_id][time_id]
-            
-        img = Image.open(image_path)
-        
+            mask_path = self.img_mask_paths[cam_id][time_id]
+                    
         # Camera_id = str(cam_id)
         # camera_parameter = FisheyeCameraParameter(name=Camera_id)
         K = cam_param['K']
@@ -165,7 +203,17 @@ class DNARendering(Dataset):
         # print(R.shape)
         # corrected_img = Image.fromarray(corrected_img[0])
         K = K * self.downsample
+        img = Image.open(image_path)
         img = img.resize(self.img_wh, Image.LANCZOS)
+        img = np.array(img)
+        
+        mask = Image.open(mask_path)
+        mask = mask.resize(self.img_wh, Image.LANCZOS)
+        mask = np.array(mask)
+        
+        # mask background
+        img = np.where(mask[..., None], img, self.bg_color)
+        
         img = self.transform(img)
         img = img.to(torch.float32)
         # R = self.R[cam_id]
@@ -178,7 +226,9 @@ class DNARendering(Dataset):
         image_name = f'{cam_id}_{time_id}'
         cx = K[0, 2]
         cy = K[1, 2]
-        caminfo = CameraInfo(
+        
+
+        caminfo = CameraInfoMask(
             uid=cam_id, R=R, T=T, 
             FovY=FovY, FovX=FovX, 
             image=img,
@@ -190,8 +240,9 @@ class DNARendering(Dataset):
             focal_length_y=K[1, 1],
             cx=cx,
             cy=cy,
+            mask=torch.from_numpy(mask)[None],
         )
-        
+    
         return caminfo
     
     def load_pose(self, index):

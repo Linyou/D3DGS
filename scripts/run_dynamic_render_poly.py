@@ -16,7 +16,7 @@ def safe_run(cmd):
         print(f"Error running the command: {e}")
         
         
-def run_excu(name, path, config, ckpt_name):
+def run_excu(name, path, config, ckpt_name, save_npz=False):
     # first frame
     command = [
         'python', 'render_dynamic.py',
@@ -28,7 +28,9 @@ def run_excu(name, path, config, ckpt_name):
         '--skip_train',
         '--skip_test',
         '--ckpt_name', f'{ckpt_name}',
-    ]
+    ] + (
+        ['--save_npz'] if save_npz else []
+    )
     safe_run(command)
 
 # name = 'flame_steak_poly_base_v10'
@@ -87,22 +89,36 @@ task_list = [
     #     'config': "arguments/hypernerf/default.py",
     #     'ckpt_name': "chkpnt10000.pth",
     # },
-    {
-        'name': 'hypernerf/misc_espresso_fftpoly@20231212-034927',
-        'path': '/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/misc_espresso/espresso',
-        'config': "arguments/hypernerf/default.py",
-        'ckpt_name': "chkpnt10000.pth",
-    },
+    # {
+    #     'name': 'hypernerf/misc_espresso_fftpoly@20231212-034927',
+    #     'path': '/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/misc_espresso/espresso',
+    #     'config': "arguments/hypernerf/default.py",
+    #     'ckpt_name': "chkpnt10000.pth",
+    # },
     # {
     #     'name': 'hypernerf/misc_split-cookie_fftpoly@20231212-024358',
     #     'path': '/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/misc_split-cookie/split-cookie',
     #     'config': "arguments/hypernerf/default.py",
     #     'ckpt_name': "chkpnt10000.pth",
     # },
+    # {
+    #     'name': 'dnerf/jumpingjacks_fftpoly@20231222-233154',
+    #     'path': '/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/jumpingjacks',
+    #     'config': "arguments/dnerf/jumpingjacks.py",
+    #     'ckpt_name': "chkpnt10000.pth",
+    #     'save_npz': True,
+    # },
+    {
+        'name': 'dnerf/hook_fftpoly@20231227-183328',
+        'path': '/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/hook',
+        'config': "arguments/dnerf/hook.py",
+        'ckpt_name': "chkpnt20000.pth",
+        'save_npz': True,
+    },
 ]
 
 for task in task_list:
     name = task['name']
     print(colored("Running: ", 'light_cyan'), f'{name}')
-    run_excu(task["name"], task["path"], task["config"], task["ckpt_name"])
+    run_excu(**task)
     sleep(5)

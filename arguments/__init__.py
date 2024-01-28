@@ -80,7 +80,7 @@ class PipelineParams(ParamGroup):
 class OptimizationParams(ParamGroup):
     def __init__(self, parser):
         self.iterations = 30_000
-        self.position_lr_init = 0.00016
+        self.position_lr_init =  0.00016
         self.position_lr_final = 0.0000016
         self.position_lr_delay_mult = 0.01
         self.position_lr_max_steps = 30_000
@@ -103,9 +103,13 @@ class OptimizationParams(ParamGroup):
         self.dataloader=False
         self.no_deform_from_iter=0
         self.factor_t = False
+        self.offset_t = False
         self.factor_t_value = 0.5
+        self.offset_t_value = 0.5
         self.loader_shuffle = False
         self.detach_base_iter = 5000
+        self.opacity_mask = False
+        self.normalize_timestamp = True
         super().__init__(parser, "Optimization Parameters")
         
 class FlowParams(ParamGroup):
@@ -120,11 +124,11 @@ class FlowParams(ParamGroup):
         self.opc_trajectory_type = 'none'
         self.feature_traj_feat_dim = 2
         self.feature_trajectory_type = 'none'
-        self.feature_dc_trajectory_type = 'fft'
+        self.feature_dc_trajectory_type = 'none'
         self.traj_init = 'zero'
         self.poly_base_factor = 1.0
         self.Hz_base_factor = 1.0
-        self.normliaze = True
+        self.normliaze = False
         self.get_smooth_loss=False
         self.use_interpolation=False
         self.random_noise=False

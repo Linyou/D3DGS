@@ -45,4 +45,5 @@ OptimizationParams = dict(
     batch_size=1,
     no_deform_from_iter=0,
     # knn_loss = True,
+    detach_base_iter=1000_000,
 )
