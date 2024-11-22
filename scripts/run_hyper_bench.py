@@ -8,7 +8,7 @@ from time import sleep
 timestamp = time.time()
 formatted_timestamp = datetime.fromtimestamp(timestamp).strftime('%Y%m%d-%H%M%S')
 
-selected_gpu = '0'
+selected_gpu = '2'
 my_env = os.environ.copy()
 my_env["CUDA_VISIBLE_DEVICES"] = selected_gpu
 
@@ -46,39 +46,39 @@ def run_excu(name_prefix, path, order=32):
     
 hyper_list = [
     # {
-    #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/interp_cut-lemon/cut-lemon1",
-    #     "name": "interp_cut-lemon",
+    #     "path": "/data/loyot/datasets/cut-lemon1",
+    #     "name": "cut-lemon1",
     # },
     # {
-    #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/interp_chickchicken/chickchicken",
+    #     "path": "/data/loyot/datasets/chickchicken",
     #     "name": "interp_chickchicken",
     # },
     # {
-    #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/misc_split-cookie/split-cookie",
-    #     "name": "misc_split-cookie",
-    # },
-    # {
-    #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/misc_espresso/espresso",
-    #     "name": "misc_espresso",
-    # },
-    # {
-    #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/misc_americano/americano",
-    #     "name": "misc_americano",
+    #     "path": "/data/loyot/datasets/split-cookie",
+    #     "name": "split-cookie",
     # },
     {
-        "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/vrig_3dprinter/3dprinter",
-        "name": "vrig_3dprinter",
+        "path": "/data/loyot/datasets/espresso",
+        "name": "misc_espresso",
     },
     # {
-    #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/vrig_broom/broom",
+    #     "path": "/data/loyot/datasets/americano",
+    #     "name": "misc_americano",
+    # },
+    # {
+    #     "path": "/data/loyot/datasets/vrig-3dprinter",
+    #     "name": "vrig_3dprinter",
+    # },
+    # {
+    #     "path": "/data/loyot/datasets/broom2",
     #     "name": "vrig_broom",
     # },
     # {
-    #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/vrig_peel-banana/peel-banana",
+    #     "path": "/data/loyot/datasets/vrig-peel-banana",
     #     "name": "vrig_peel-banana",
     # },
     # {
-    #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/vrig_chicken/chicken",
+    #     "path": "/data/loyot/datasets/vrig-chicken",
     #     "name": "vrig_chicken",
     # },
 ]

@@ -186,8 +186,6 @@ def get_spiral(c2ws_all, near_fars, rads_scale=1.0, N_views=120):
     """
     Generate a set of poses using NeRF's spiral camera trajectory as validation poses.
     """
-    
-    c2ws_all[..., 3] = c2ws_all[..., 3] / 0.75 * 0.3
     # center pose
     c2w = average_poses(c2ws_all)
 
@@ -265,27 +263,27 @@ class Neural3D_NDC_Dataset(Dataset):
         poses = poses_arr[:, :-2].reshape([-1, 3, 5])  # (N_cams, 3, 5)
         self.near_fars = poses_arr[:, -2:]
         videos = glob.glob(os.path.join(self.root_dir, "cam*"))
-        videos = [li for li in videos if li.endswith(".mp4")]
         videos = sorted(videos)
+        # breakpoint()
         assert len(videos) == poses_arr.shape[0]
 
         H, W, focal = poses[0, :, -1]
         focal = focal / self.downsample
         self.focal = [focal, focal]
         poses = np.concatenate([poses[..., 1:2], -poses[..., :1], poses[..., 2:4]], -1)
-        poses, _ = center_poses(
-            poses, self.blender2opencv
-        )  # Re-center poses so that the average is near the center.
+        # poses, _ = center_poses(
+        #     poses, self.blender2opencv
+        # )  # Re-center poses so that the average is near the center.
 
-        near_original = self.near_fars.min()
-        scale_factor = near_original * 0.75
-        self.near_fars /= (
-            scale_factor  # rescale nearest plane so that it is at z = 4/3.
-        )
-        poses[..., 3] /= scale_factor
+        # near_original = self.near_fars.min()
+        # scale_factor = near_original * 0.75
+        # self.near_fars /= (
+        #     scale_factor  # rescale nearest plane so that it is at z = 4/3.
+        # )
+        # poses[..., 3] /= scale_factor
 
         # Sample N_views poses for validation - NeRF-like camera trajectory.
-        N_views = 240
+        N_views = 300
         self.val_poses = get_spiral(poses, self.near_fars, N_views=N_views)
         # self.val_poses = self.directions
         W, H = self.img_wh

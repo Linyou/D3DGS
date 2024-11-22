@@ -2,3 +2,13 @@ pytorch_msssim
 lpips
 plyfile
 tqdm
+termcolor
+opencv-python
+imageio[ffmpeg]
+openmim
+mmcv==1.6.0
+taichi
+matplotlib
+# git+https://github.com/graphdeco-inria/diff-gaussian-rasterization
+# git+https://gitlab.inria.fr/bkerbl/simple-knn.git
+# git+https://github.com/facebookresearch/pytorch3d.git

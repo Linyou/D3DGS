@@ -4,12 +4,12 @@ import os
 import time
 from datetime import datetime
 
-data_root = "/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/"
+data_root = "/home/loyot/loyot/datasets/dynamic_nerf/"
 
 timestamp = time.time()
 formatted_timestamp = datetime.fromtimestamp(timestamp).strftime('%Y%m%d-%H%M%S')
 
-selected_gpu = '0'
+selected_gpu = '7'
 my_env = os.environ.copy()
 my_env["CUDA_VISIBLE_DEVICES"] = selected_gpu
 
@@ -50,18 +50,18 @@ dnerf_list = [
     #     "path": os.path.join(data_root, "bouncingballs"),
     #     "name": "bouncingballs",
     # },
-    # {
-    #     "path": os.path.join(data_root, "hellwarrior"),
-    #     "name": "hellwarrior",
-    # },
+    {
+        "path": os.path.join(data_root, "hellwarrior"),
+        "name": "hellwarrior",
+    },
     # {
     #     "path": os.path.join(data_root, "hook"),
     #     "name": "hook",
     # },
-    {
-        "path": os.path.join(data_root, "jumpingjacks"),
-        "name": "jumpingjacks",
-    },
+    # {
+    #     "path": os.path.join(data_root, "jumpingjacks"),
+    #     "name": "jumpingjacks",
+    # },
     # {
     #     "path": os.path.join(data_root, "mutant"),
     #     "name": "mutant",

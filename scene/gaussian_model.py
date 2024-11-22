@@ -95,10 +95,11 @@ class GaussianModel:
         factor_t_value: float = 0.5,
         offset_t: bool = False,
         offset_t_value: float = 0.5,
-        normalize_timestamp: bool = True,):
+        normalize_timestamp: bool = True,
+        moving_scale: float = 1.0):
         
         self.normliaze = normliaze
-        
+        self.moving_scale = moving_scale
         self.max_steps = max_steps
         self.active_sh_degree = 0
         self.max_sh_degree = sh_degree  
@@ -433,13 +434,10 @@ class GaussianModel:
             # t = int(t)
             # print(t)
             self.timestamp = (t/self.max_frames)
-            if t == 0:
-                # self.timestamp = (t+0.1) / self.max_frames
-                offset_width = 0
-            else:
-                offset_width = (1/self.max_frames)*0.1
+            offset_width = (1/self.max_frames)*0.1
                 
         else:
+            self.timestamp = t
             offset_width = 0.01
             
         if self.factor_t:
@@ -451,20 +449,20 @@ class GaussianModel:
 
         # import pdb; pdb.set_trace()
         
-        if random_noise and training and t != 0 and t != self.max_frames:
+        if random_noise and training:
             noise_weight = offset_width * (1 - (training_step/self.max_steps))
             self.timestamp += noise_weight*np.random.randn()
         
         timestamp = self.timestamp - self._time_center_params
         self.timestamp_final = timestamp
-        mid_xyz = self.xyz_trajectory_func(
+        mid_xyz = self.moving_scale * self.xyz_trajectory_func(
             xyz_params, 
             # self.timestamp, #* xyz_tfactor[0:1], 
             timestamp,
             self.traj_fit_degree
         )
         
-        mid_rot = self.rot_trajectory_func(
+        mid_rot = self.moving_scale * self.rot_trajectory_func(
             rot_params, 
             # self.timestamp,# * xyz_tfactor[0:1], 
             timestamp,

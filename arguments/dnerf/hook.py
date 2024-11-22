@@ -15,6 +15,8 @@ FlowParams = dict(
     poly_base_factor = 1,
     Hz_base_factor = 1,
     
+    random_noise = True,
+    normalize_timestamp = False,
     # regularization
     # random_noise = True,
     # get_moving_loss = True,
@@ -31,7 +33,7 @@ OptimizationParams = dict(
     feature_lr = 0.0025,
     opacity_lr = 0.05,
     scaling_lr = 0.005,
-    rotation_lr = 0.005,
+    rotation_lr = 0.001,
     percent_dense = 0.01,
     lambda_dssim = 0.01,
     densification_interval = 100,

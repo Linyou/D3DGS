@@ -44,12 +44,16 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     render_list = []
     
     gaussian_collect = defaultdict(list)
+    
+    import ipdb; ipdb.set_trace()
     # views = views[::2]
     # import pdb;pdb.set_trace()
-    # if len(views) > 3419:
-    # views = views[2000:]
+    if len(views) > 300:
+        views = views[:300]
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
-        if idx == 0:time1 = time()
+        if idx == 0:
+            time1 = time()
+        #     view_fix = view
         gaussians.set_timestamp(view.timestamp)
         render_pkg = render(view, gaussians, pipeline, background)
 
@@ -78,9 +82,9 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
             gaussian_collect['log_scales'] = (
                 gaussians._fwd_scale.detach().cpu().numpy()
             )
-            gaussian_collect['means2D'].append(
-                render_pkg['xy'].detach().cpu().numpy()
-            )
+            # gaussian_collect['means2D'].append(
+            #     render_pkg['xy'].detach().cpu().numpy()
+            # )
 
         rendering = render_pkg["render"]
         # torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
@@ -166,6 +170,7 @@ def render_sets(dataset : ModelParams, opt, flow_args, iteration : int, pipeline
             render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background)
         if not skip_video:
             render_set(dataset.model_path,"video",scene.loaded_iter,scene.getVideoCameras(),gaussians,pipeline,background, save_npz=save_npz)
+            
 if __name__ == "__main__":
     ti.init(arch=ti.cuda, offline_cache=False)
     # Set up command line argument parser

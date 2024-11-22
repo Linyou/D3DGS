@@ -7,7 +7,7 @@ from datetime import datetime
 timestamp = time.time()
 formatted_timestamp = datetime.fromtimestamp(timestamp).strftime('%Y%m%d-%H%M%S')
 
-selected_gpu = '0'
+selected_gpu = '4'
 my_env = os.environ.copy()
 my_env["CUDA_VISIBLE_DEVICES"] = selected_gpu
 
@@ -44,7 +44,7 @@ def run_excu(name_prefix, path):
 hyper_list = [
     {
         # "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/3d_vedio_datasets/flame_steak/images_split/0",
-        "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/3d_vedio_datasets/flame_steak",
+        "path": "/data1/loyot/datasets/flame_steak",
         "name": "flame_steak",
     },
     # {
@@ -64,7 +64,7 @@ hyper_list = [
     #     "name": "coffee_martini",
     # },
     # {
-    #     "path": "/home/loyot/workspace/SSD_1T/Datasets/NeRF/3d_vedio_datasets/flame_salmon_1/images_split/0",
+    #     "path": "/data1/loyot/datasets/flame_salmon_1",
     #     "name": "flame_salmon_1",
     # },
 ]

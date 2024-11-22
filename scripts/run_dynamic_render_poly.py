@@ -3,7 +3,7 @@ from termcolor import colored
 import os
 from time import sleep
 
-selected_gpu = '0'
+selected_gpu = '6'
 my_env = os.environ.copy()
 my_env["CUDA_VISIBLE_DEVICES"] = selected_gpu
 
@@ -15,6 +15,7 @@ def safe_run(cmd):
     except subprocess.CalledProcessError as e:
         print(f"Error running the command: {e}")
         
+# CUDA_VISIBLE_DEVICES=6 python render_dynamic.py -s /data/loyot/datasets/split-cookie --model_path output/hypernerf/split-cookie_fftpoly@20240130-144623/ --configs arguments/hypernerf/default.py --eval --skip_train --skip_test --ckpt_name chkpnt10000.pth
         
 def run_excu(name, path, config, ckpt_name, save_npz=False):
     # first frame
@@ -33,47 +34,11 @@ def run_excu(name, path, config, ckpt_name, save_npz=False):
     )
     safe_run(command)
 
-# name = 'flame_steak_poly_base_v10'
-# dataset_path = '/home/loyot/workspace/SSD_1T/Datasets/NeRF/3d_vedio_datasets/flame_steak/images_split/0'
-
-# name = 'lego_poly_base_v12'
-# dataset_path = '/home/test/workspace/loyot/datasets/hyper_nerf/vrig-chicken'
-# config = "arguments/dnerf/lego.py"
-
-# name = 'vrig_chicken_poly_base_v17'
-# dataset_path = '/home/test/workspace/loyot/datasets/hyper_nerf/vrig-chicken'
-# config = "arguments/hypernerf/default.py"
-
-# name = 'split-cookie_poly_base_v17'
-# dataset_path = '/home/test/workspace/loyot/datasets/hyper_nerf/split-cookie'
-# config = "arguments/hypernerf/default.py"
-
-# name = 'espresso_poly_base_v17'
-# dataset_path = '/home/test/workspace/loyot/datasets/hyper_nerf/espresso'
-# config = "arguments/hypernerf/default.py"
-
-# name = 'americano_poly_base_v17'
-# dataset_path = '/home/test/workspace/loyot/datasets/hyper_nerf/americano'
-# config = "arguments/hypernerf/default.py"
-
-# name = 'chickchicken_poly_base_v17'
-# dataset_path = '/home/test/workspace/loyot/datasets/hyper_nerf/chickchicken'
-# config = "arguments/hypernerf/chickchicken.py"
-
-# name = 'dnerf/jumpingjacks_fftpoly@20231208-040752'
-# dataset_path = '/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/jumpingjacks'
-# config = "arguments/dnerf/jumpingjacks.py"
-
-# name = 'dynerf/flame_steak_fftpoly@20231210-154735'
-# dataset_path = '/home/loyot/workspace/SSD_1T/Datasets/NeRF/3d_vedio_datasets/flame_steak'
-# config = "arguments/dynerf/default.py"
-# ckpt_name = "chkpnt30000.pth"
-
 
 task_list = [
     # {
-    #     'name': 'hypernerf/interp_chickchicken_fftpoly@20231212-024358',
-    #     'path': '/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/interp_chickchicken/chickchicken',
+    #     'name': 'hypernerf/vrig_chicken_fftpoly@20240130-133120',
+    #     'path': '/data/loyot/datasets/vrig-chicken',
     #     'config': "arguments/hypernerf/default.py",
     #     'ckpt_name': "chkpnt10000.pth",
     # },
@@ -95,12 +60,13 @@ task_list = [
     #     'config': "arguments/hypernerf/default.py",
     #     'ckpt_name': "chkpnt10000.pth",
     # },
-    # {
-    #     'name': 'hypernerf/misc_split-cookie_fftpoly@20231212-024358',
-    #     'path': '/home/loyot/workspace/SSD_1T/Datasets/NeRF/HyberNeRF/misc_split-cookie/split-cookie',
-    #     'config': "arguments/hypernerf/default.py",
-    #     'ckpt_name': "chkpnt10000.pth",
-    # },
+    {
+        'name': 'hypernerf/split-cookie_fftpoly@20240130-144623',
+        'path': '/data/loyot/datasets/split-cookie',
+        'config': "arguments/hypernerf/default.py",
+        'ckpt_name': "chkpnt10000.pth",
+        "save_npz": True,
+    },
     # {
     #     'name': 'dnerf/jumpingjacks_fftpoly@20231222-233154',
     #     'path': '/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/jumpingjacks',
@@ -108,13 +74,13 @@ task_list = [
     #     'ckpt_name': "chkpnt10000.pth",
     #     'save_npz': True,
     # },
-    {
-        'name': 'dnerf/hook_fftpoly@20231227-183328',
-        'path': '/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/hook',
-        'config': "arguments/dnerf/hook.py",
-        'ckpt_name': "chkpnt20000.pth",
-        'save_npz': True,
-    },
+    # {
+    #     'name': 'dnerf/hook_fftpoly@20231227-183328',
+    #     'path': '/home/loyot/workspace/SSD_1T/Datasets/NeRF/dynamic_data/hook',
+    #     'config': "arguments/dnerf/hook.py",
+    #     'ckpt_name': "chkpnt20000.pth",
+    #     'save_npz': True,
+    # },
 ]
 
 for task in task_list:

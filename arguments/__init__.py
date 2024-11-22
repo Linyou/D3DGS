@@ -107,9 +107,10 @@ class OptimizationParams(ParamGroup):
         self.factor_t_value = 0.5
         self.offset_t_value = 0.5
         self.loader_shuffle = False
-        self.detach_base_iter = 5000
+        self.detach_base_iter = 1000000
         self.opacity_mask = False
         self.normalize_timestamp = True
+        self.mse_loss = False
         super().__init__(parser, "Optimization Parameters")
         
 class FlowParams(ParamGroup):
@@ -134,6 +135,7 @@ class FlowParams(ParamGroup):
         self.random_noise=False
         self.get_moving_loss=False
         self.masked=False
+        self.moving_scale = 1.0
         #lr
         # self.xyz_lr = 0.0001
         # self.rot_lr = 0.0001

@@ -113,6 +113,7 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
     scale_loss = None
     moving_loss = None
     smooth_loss = None
+    Ll2 = None
     if opt.knn_loss:
         gaussians.get_knn_index()
         
@@ -148,6 +149,10 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
                     collate_fn=list
                 )
                 loader = iter(viewpoint_stack_loader)
+            else:
+                viewpoint_stack = [i for i in viewpoint_stack]
+                temp_list = deepcopy(viewpoint_stack)
+                viewpoint_stack = temp_list.copy()
         if opt.dataloader:
             try:
                 viewpoint_cams = next(loader)
@@ -156,11 +161,18 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
                 batch_size = 1
                 loader = iter(viewpoint_stack_loader)
         else:
+            idx = 0
             viewpoint_cams = []
-            for bs in range(opt.batch_size):
-                idx = randint(0, len(viewpoint_stack)-1)
-                viewpoint_cams.append(viewpoint_stack[idx])
-                
+
+            while idx < batch_size :    
+                    
+                viewpoint_cam = viewpoint_stack.pop(randint(0,len(viewpoint_stack)-1))
+                if not viewpoint_stack :
+                    viewpoint_stack =  temp_list.copy()
+                viewpoint_cams.append(viewpoint_cam)
+                idx +=1
+            if len(viewpoint_cams) == 0:
+                continue
             
         renders = []
         renders_opacities = []
@@ -211,7 +223,7 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
         gt_images = torch.stack(gt_images)    
         
 
-        Ll1 = l1_loss(images, gt_images) #+ l2_loss(images, gt_images) 
+        Ll1 = l1_loss(images, gt_images)
         # Ll1 = F.smooth_l1_loss(images, gt_images)
         # Ll1 = l2_loss(images, gt_images) 
         # ssim_loss = ssim(images, gt_images)
@@ -219,6 +231,10 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
         loss = Ll1
         # loss = Ll1 + 0.01 * (1.0 - ssim_loss) #+ 0.01 * lpips_loss
         # loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(images, gt_images))
+        
+        if opt.mse_loss:
+            Ll2 = l2_loss(images, gt_images)
+            loss += Ll2
         
         if opt.opacity_mask:
             opacity = torch.stack(renders_opacities)
@@ -235,7 +251,7 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
             
         if flow_args.get_moving_loss:
             moving_loss = gaussians.moving_loss()
-            loss += moving_loss * 0.1
+            loss += moving_loss
             
         if flow_args.get_smooth_loss:
             smooth_loss = gaussians.smooth_loss()
@@ -281,6 +297,8 @@ def training(dataset, opt, pipe, flow_args, testing_iterations, saving_iteration
                     bar_info.update({"ScaleLoss": f"{scale_loss:.{7}f}"})
                 if mask_loss is not None:
                     bar_info.update({"MaskLoss": f"{mask_loss:.{7}f}"})
+                if Ll2 is not None:
+                    bar_info.update({"Ll2": f"{Ll2:.{7}f}"})
                 bar_info.update({"Loss": f"{ema_loss_for_log:.{7}f}"})
                 bar_info.update({"NumGass": f"{gaussians._xyz.shape[0]}"})
                 # if iteration > 5000:
@@ -449,17 +467,17 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                     # opacity = render_result["opacity"]
                     # depth = render_result["depth"]
                     # depth_normal = (depth - depth.min()) / (depth.max() - depth.min())
-                    gt_opacity = None
-                    if viewpoint.extra_cam_info is not None:
-                        if viewpoint.extra_cam_info.mask is not None:
-                            gt_opacity = viewpoint.extra_cam_info.mask.float().cuda()
+                    # gt_opacity = None
+                    # if viewpoint.extra_cam_info is not None:
+                    #     if viewpoint.extra_cam_info.mask is not None:
+                    #         gt_opacity = viewpoint.extra_cam_info.mask.float().cuda()
                     if tb_writer:
                         tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
                         tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
                         # tb_writer.add_images(config['name'] + "_view_{}/opacity".format(viewpoint.image_name), opacity[None], global_step=iteration)
                         # tb_writer.add_images(config['name'] + "_view_{}/depth".format(viewpoint.image_name), depth_normal[None], global_step=iteration)
-                        if gt_opacity is not None:
-                            tb_writer.add_images(config['name'] + "_view_{}/gt_opacity".format(viewpoint.image_name), gt_opacity[None], global_step=iteration)
+                        # if gt_opacity is not None:
+                        #     tb_writer.add_images(config['name'] + "_view_{}/gt_opacity".format(viewpoint.image_name), gt_opacity[None], global_step=iteration)
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
                     ssims_test += ms_ssim(

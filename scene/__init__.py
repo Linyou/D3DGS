@@ -65,7 +65,7 @@ class Scene:
             self.is_hyper = True
         elif os.path.exists(os.path.join(args.source_path, "poses_bounds.npy")):
             print("Found poses_bounds.npy file, assuming DyNeRF data set!")
-            radius_extent = 5.0
+            radius_extent = 2.
             scene_info = sceneLoadTypeCallbacks["dynerf"](args.source_path, args.white_background, args.eval)
             self.is_dynerf = True
         elif os.path.exists(os.path.join(args.source_path, "sparse")):

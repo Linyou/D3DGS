@@ -30,6 +30,8 @@ from tqdm import tqdm
 import torchvision.transforms as transforms
 from scene.neural_3D_dataset_NDC import get_spiral
 
+from typing import Any
+
 class CameraInfo(NamedTuple):
     uid: int
     R: np.array
@@ -42,6 +44,7 @@ class CameraInfo(NamedTuple):
     width: int
     height: int
     timestamp: int
+    # mask: Any
 
 class CameraInfoExtra(NamedTuple):
     uid: int
@@ -254,15 +257,27 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
     with open(os.path.join(path, transformsfile)) as json_file:
         contents = json.load(json_file)
         fovx = contents["camera_angle_x"]
-
+        focal = fov2focal(fovx, 800)
+        print("fovx: ", fovx)
+        print("Focal: ", focal)
         frames = contents["frames"]
         for idx, frame in enumerate(frames):
             cam_name = os.path.join(path, frame["file_path"] + extension)
             time = mapper[frame["time"]]
-            matrix = np.linalg.inv(np.array(frame["transform_matrix"]))
-            R = -np.transpose(matrix[:3,:3])
-            R[:,0] = -R[:,0]
-            T = -matrix[:3, 3]
+            # matrix = np.linalg.inv(np.array(frame["transform_matrix"]))
+            # R = -np.transpose(matrix[:3,:3])
+            # R[:,0] = -R[:,0]
+            # T = -matrix[:3, 3]
+            
+            # NeRF 'transform_matrix' is a camera-to-world transform
+            c2w = np.array(frame["transform_matrix"])
+            # change from OpenGL/Blender camera axes (Y up, Z back) to COLMAP (Y down, Z forward)
+            c2w[:3, 1:3] *= -1
+
+            # get the world-to-camera transform and set R, T
+            w2c = np.linalg.inv(c2w)
+            R = np.transpose(w2c[:3,:3])  # R is stored transposed due to 'glm' in CUDA code
+            T = w2c[:3, 3]
 
             image_path = os.path.join(path, cam_name)
             image_name = Path(cam_name).stem
@@ -323,6 +338,31 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png", factor
     )
     return scene_info
 
+def plot_camera_orientations(cam_list, xyz):
+    import matplotlib.pyplot as plt
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    # ax2 = fig.add_subplot(122, projection='3d')
+    # xyz = xyz[xyz[:,0]<1]
+    threshold=2
+    xyz = xyz[(xyz[:, 0] >= -threshold) & (xyz[:, 0] <= threshold) &
+                         (xyz[:, 1] >= -threshold) & (xyz[:, 1] <= threshold) &
+                         (xyz[:, 2] >= -threshold) & (xyz[:, 2] <= threshold)]
+
+    ax.scatter(xyz[:,0],xyz[:,1],xyz[:,2],c='r',s=0.1)
+    for cam in tqdm(cam_list):
+        # 提取 R 和 T
+        R = cam.R
+        T = cam.T
+
+        direction = R @ np.array([0, 0, 1])
+
+        ax.quiver(T[0], T[1], T[2], direction[0], direction[1], direction[2], length=1)
+
+    ax.set_xlabel('X Axis')
+    ax.set_ylabel('Y Axis')
+    ax.set_zlabel('Z Axis')
+    plt.savefig("output.png")
 
 def readHyperDataInfos(datadir,use_bg_points,eval, gen_ply=False, factor=1.0):
     # train_cam_infos = Load_hyper_data(datadir,1.0,use_bg_points,split ="train")
@@ -337,10 +377,10 @@ def readHyperDataInfos(datadir,use_bg_points,eval, gen_ply=False, factor=1.0):
     video_cam_infos = copy.deepcopy(test_cam_infos)
     video_cam_infos.split="video"
     # import pdb; pdb.set_trace()
-
-    ply_path = os.path.join(datadir, "points.npy")
-
-    xyz = np.load(ply_path,allow_pickle=True)
+    
+    ply_path = os.path.join(datadir, "points3D_downsample2.ply")
+    pcd = fetchPly(ply_path)
+    xyz = np.array(pcd.points)
     xyz -= train_cam_infos.scene_center
     xyz *= train_cam_infos.coord_scale
     xyz = xyz.astype(np.float32)
@@ -348,6 +388,18 @@ def readHyperDataInfos(datadir,use_bg_points,eval, gen_ply=False, factor=1.0):
     pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((xyz.shape[0], 3)))
 
     nerf_normalization = getNerfppNorm(train_cam)
+    plot_camera_orientations(train_cam_infos, pcd.points)
+
+    # ply_path = os.path.join(datadir, "points3D_downsample.ply")
+
+    # xyz = np.load(ply_path,allow_pickle=True)
+    # xyz -= train_cam_infos.scene_center
+    # xyz *= train_cam_infos.coord_scale
+    # xyz = xyz.astype(np.float32)
+    # shs = np.random.random((xyz.shape[0], 3)) / 255.0
+    # pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((xyz.shape[0], 3)))
+
+    # nerf_normalization = getNerfppNorm(train_cam)
 
     if gen_ply:
         # Since this data set has no colmap data, we start with random points
@@ -398,7 +450,7 @@ def format_infos_dna(dataset,split):
 
     return cameras
 
-def format_infos(dataset, split, image, dataset_size, iter_instrics=False):
+def format_infos_dna(dataset, split, image, dataset_size, iter_instrics=False):
     # loading
     cameras = []
     if split == "train":
@@ -425,6 +477,25 @@ def format_infos(dataset, split, image, dataset_size, iter_instrics=False):
                     timestamp = time
                 )
             )
+
+    return cameras
+
+def format_infos_dy(dataset,split):
+    # loading
+    cameras = []
+    image = dataset[0][0]
+    if split == "train":
+        for idx in tqdm(range(len(dataset))):
+            image_path = None
+            image_name = f"{idx}"
+            time = dataset.image_times[idx]
+            # matrix = np.linalg.inv(np.array(pose))
+            R,T = dataset.load_pose(idx)
+            FovX = focal2fov(dataset.focal[0], image.shape[1])
+            FovY = focal2fov(dataset.focal[0], image.shape[2])
+            cameras.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
+                                image_path=image_path, image_name=image_name, width=image.shape[2], height=image.shape[1],
+                                timestamp = time))
 
     return cameras
 
@@ -463,59 +534,46 @@ def format_render_poses(poses, data_infos, max_time=300):
 
 def readdynerfInfo(datadir,use_bg_points,eval):
     # loading all the data follow hexplane format
-    ply_path = os.path.join(datadir, "points3d.ply")
-
+    # ply_path = os.path.join(datadir, "points3D_dense.ply")
+    ply_path = os.path.join(datadir, "points3D_downsample2.ply")
     from scene.neural_3D_dataset_NDC import Neural3D_NDC_Dataset
     train_dataset = Neural3D_NDC_Dataset(
-        datadir,
-        "train",
-        1.0,
-        time_scale=1,
-        scene_bbox_min=[-2.5, -2.0, -1.0],
-        scene_bbox_max=[2.5, 2.0, 1.0],
-        eval_index=0,
-    )    
+    datadir,
+    "train",
+    1.0,
+    time_scale=1,
+    scene_bbox_min=[-2.5, -2.0, -1.0],
+    scene_bbox_max=[2.5, 2.0, 1.0],
+    eval_index=0,
+        )    
     test_dataset = Neural3D_NDC_Dataset(
-        datadir,
-        "test",
-        1.0,
-        time_scale=1,
-        scene_bbox_min=[-2.5, -2.0, -1.0],
-        scene_bbox_max=[2.5, 2.0, 1.0],
-        eval_index=0,
-    )
-    image = train_dataset[0][0]
-    train_cam_infos = format_infos(
-        train_dataset, 
-        "train", 
-        image, 
-        len(train_dataset)
-    )
-    
-    # test_cam_infos = format_infos(test_dataset,"test")
-    val_cam_infos = format_render_poses(test_dataset.val_poses,test_dataset, max_time=300)
+    datadir,
+    "test",
+    1.0,
+    time_scale=1,
+    scene_bbox_min=[-2.5, -2.0, -1.0],
+    scene_bbox_max=[2.5, 2.0, 1.0],
+    eval_index=0,
+        )
+    train_cam_infos = format_infos_dy(train_dataset,"train")
+    val_cam_infos = format_render_poses(test_dataset.val_poses,test_dataset)
     nerf_normalization = getNerfppNorm(train_cam_infos)
-    # create pcd
-    # if not os.path.exists(ply_path):
-    # Since this data set has no colmap data, we start with random points
-    num_pts = 50_000
-    print(f"Generating random point cloud ({num_pts})...")
-    radius = nerf_normalization["radius"] * 5
-    # We create random points inside the bounds of the synthetic Blender scenes
-    xyz = np.random.random((num_pts, 3)) * 2 * radius - radius
-    shs = np.random.random((num_pts, 3)) / 255.0
-    pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
-        
-    scene_info = SceneInfo(
-        point_cloud=pcd,
-        train_cameras=train_dataset,
-        train_cameras_0=None,
-        test_cameras=test_dataset,
-        video_cameras=val_cam_infos,
-        nerf_normalization=nerf_normalization,
-        ply_path=ply_path,
-        maxtime=300
-    )
+
+    # xyz = np.load
+    pcd = fetchPly(ply_path)
+    print("origin points,",pcd.points.shape[0])
+    
+    print("after points,",pcd.points.shape[0])
+
+    scene_info = SceneInfo(point_cloud=pcd,
+                           train_cameras=train_dataset,
+                           train_cameras_0=None,
+                           test_cameras=test_dataset,
+                           video_cameras=val_cam_infos,
+                           nerf_normalization=nerf_normalization,
+                           ply_path=ply_path,
+                           maxtime=300
+                           )
     return scene_info
 
 def readdnaInfo(datadir, anno_smc, factor=1.0):
@@ -543,7 +601,7 @@ def readdnaInfo(datadir, anno_smc, factor=1.0):
         only_0=True,
     )  
     image = train_dataset[0].image
-    train_cam_infos = format_infos(
+    train_cam_infos = format_infos_dna(
         train_dataset, 
         "train", 
         image,
